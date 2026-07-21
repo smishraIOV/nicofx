@@ -1,0 +1,24 @@
+# github
+.github/
+
+# Compiler files
+cache/
+out/
+
+# Ignores development broadcast logs
+broadcast/
+!broadcast/*/run-latest.json
+
+# Docs
+docs/
+
+# Dotenv
+.env
+.env.*
+
+# Local scratch
+qs.txt
+
+# App
+app/node_modules/
+app/dist/
