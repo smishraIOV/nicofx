@@ -17,20 +17,7 @@
   },
   {
     "type": "function",
-    "name": "engine",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "address",
-        "internalType": "contract IEngineView"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "lastUpdated",
+    "name": "arsPerUsd",
     "inputs": [],
     "outputs": [
       {
@@ -43,8 +30,40 @@
   },
   {
     "type": "function",
-    "name": "mxpPerUsd",
+    "name": "clpPerUsd",
     "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "hub",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "contract IProtocolHub"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "lastUpdated",
+    "inputs": [
+      {
+        "name": "currency",
+        "type": "uint8",
+        "internalType": "uint8"
+      }
+    ],
     "outputs": [
       {
         "name": "",
@@ -69,8 +88,33 @@
   },
   {
     "type": "function",
+    "name": "ratePerUsd",
+    "inputs": [
+      {
+        "name": "currency",
+        "type": "uint8",
+        "internalType": "uint8"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "rateWindowNonce",
-    "inputs": [],
+    "inputs": [
+      {
+        "name": "currency",
+        "type": "uint8",
+        "internalType": "uint8"
+      }
+    ],
     "outputs": [
       {
         "name": "",
@@ -89,10 +133,10 @@
   },
   {
     "type": "function",
-    "name": "setEngine",
+    "name": "setHub",
     "inputs": [
       {
-        "name": "engine_",
+        "name": "hub_",
         "type": "address",
         "internalType": "address"
       }
@@ -105,7 +149,12 @@
     "name": "setRate",
     "inputs": [
       {
-        "name": "mxpPerUsd_",
+        "name": "currency",
+        "type": "uint8",
+        "internalType": "uint8"
+      },
+      {
+        "name": "ratePerUsd_",
         "type": "uint256",
         "internalType": "uint256"
       }
@@ -154,10 +203,10 @@
   },
   {
     "type": "event",
-    "name": "EngineUpdated",
+    "name": "HubUpdated",
     "inputs": [
       {
-        "name": "engine",
+        "name": "hub",
         "type": "address",
         "indexed": true,
         "internalType": "address"
@@ -189,7 +238,13 @@
     "name": "RateUpdated",
     "inputs": [
       {
-        "name": "mxpPerUsd",
+        "name": "currency",
+        "type": "uint8",
+        "indexed": true,
+        "internalType": "uint8"
+      },
+      {
+        "name": "ratePerUsd",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
@@ -224,12 +279,17 @@
   },
   {
     "type": "error",
-    "name": "EngineNotSet",
+    "name": "HubNotSet",
     "inputs": []
   },
   {
     "type": "error",
-    "name": "EnginePaused",
+    "name": "HubPaused",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "InvalidCurrency",
     "inputs": []
   },
   {

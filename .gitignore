@@ -17,7 +17,9 @@ docs/
 .env.*
 
 # Local scratch
-qs.txt
+qs.md
+present.md
+ideation.md
 
 # App
 app/node_modules/

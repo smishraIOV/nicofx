@@ -16,14 +16,32 @@ import {
   type Hash,
 } from 'viem'
 import {
+  BUCKET_IDS,
+  CURRENCY,
+  bucketAbi,
   deployments,
-  engineAbi,
+  hubAbi,
   isDeployed,
-  mxpAbi,
   oracleAbi,
+  tokenAbi,
   usdAbi,
+  type BucketId,
 } from './contracts'
 import { useWallet } from './wallet'
+
+export type BucketState = {
+  feeBps: number
+  accruedFees: bigint
+  vaultBalance: bigint
+  collateralUsd: bigint
+  liabilityUsd: bigint
+  reserveUsd: bigint
+  mintHeadroomUsd: bigint
+  tokenBalance: bigint
+  tokenAllowance: bigint
+  ratePerUsd: bigint
+  rateWindowNonce: bigint
+}
 
 export type ProtocolState = {
   windowOpen: boolean
@@ -32,24 +50,16 @@ export type ProtocolState = {
   windowEndBlock: bigint
   windowDurationBlocks: bigint
   windowBlocksRemaining: bigint
-  feeBps: number
-  accruedFees: bigint
-  vaultBalance: bigint
-  collateralUsd: bigint
-  liabilityUsd: bigint
-  reserveUsd: bigint
-  mintHeadroomUsd: bigint
   withdrawalWindowActive: boolean
   withdrawalWindowStart: bigint
   withdrawalBlocksRemaining: bigint
-  mxpPerUsd: bigint
-  rateWindowNonce: bigint
   allowlisted: boolean
+  allowlistedAccounts: Address[]
   usdBalance: bigint
-  mxpBalance: bigint
-  usdAllowance: bigint
-  mxpAllowance: bigint
+  usdAllowanceClp: bigint
+  usdAllowanceArs: bigint
   blockNumber: bigint
+  buckets: Record<BucketId, BucketState>
 }
 
 export type TxStatus = 'pending' | 'ok' | 'fail'
@@ -63,13 +73,9 @@ export type TxEntry = {
   hash?: Hash
 }
 
-const empty: ProtocolState = {
-  windowOpen: false,
-  paused: false,
-  windowNonce: 0n,
-  windowEndBlock: 0n,
-  windowDurationBlocks: 200n,
-  windowBlocksRemaining: 0n,
+export type TransferToken = 'usd' | 'clp' | 'ars'
+
+const emptyBucket: BucketState = {
   feeBps: 0,
   accruedFees: 0n,
   vaultBalance: 0n,
@@ -77,17 +83,29 @@ const empty: ProtocolState = {
   liabilityUsd: 0n,
   reserveUsd: 0n,
   mintHeadroomUsd: 0n,
+  tokenBalance: 0n,
+  tokenAllowance: 0n,
+  ratePerUsd: 0n,
+  rateWindowNonce: 0n,
+}
+
+const empty: ProtocolState = {
+  windowOpen: false,
+  paused: false,
+  windowNonce: 0n,
+  windowEndBlock: 0n,
+  windowDurationBlocks: 200n,
+  windowBlocksRemaining: 0n,
   withdrawalWindowActive: false,
   withdrawalWindowStart: 0n,
   withdrawalBlocksRemaining: 0n,
-  mxpPerUsd: 0n,
-  rateWindowNonce: 0n,
   allowlisted: false,
+  allowlistedAccounts: [],
   usdBalance: 0n,
-  mxpBalance: 0n,
-  usdAllowance: 0n,
-  mxpAllowance: 0n,
+  usdAllowanceClp: 0n,
+  usdAllowanceArs: 0n,
   blockNumber: 0n,
+  buckets: { clp: emptyBucket, ars: emptyBucket },
 }
 
 function formatTxError(e: unknown): string {
@@ -107,9 +125,80 @@ function formatTxError(e: unknown): string {
   return String(e)
 }
 
+async function readBucket(
+  publicClient: ReturnType<typeof useWallet>['publicClient'],
+  id: BucketId,
+  address: Address,
+): Promise<BucketState> {
+  const engine = deployments.buckets[id].engine
+  const token = deployments.buckets[id].token
+  const currency = CURRENCY[id]
+
+  const [
+    feeBps,
+    accruedFees,
+    vaultBalance,
+    collateralUsd,
+    liabilityUsd,
+    reserveUsd,
+    mintHeadroomUsd,
+    tokenBalance,
+    tokenAllowance,
+    ratePerUsd,
+    rateWindowNonce,
+  ] = await Promise.all([
+    publicClient.readContract({ address: engine, abi: bucketAbi, functionName: 'feeBps' }),
+    publicClient.readContract({ address: engine, abi: bucketAbi, functionName: 'accruedFees' }),
+    publicClient.readContract({ address: engine, abi: bucketAbi, functionName: 'vaultBalance' }),
+    publicClient.readContract({ address: engine, abi: bucketAbi, functionName: 'collateralUsd' }),
+    publicClient.readContract({ address: engine, abi: bucketAbi, functionName: 'liabilityUsd' }),
+    publicClient.readContract({ address: engine, abi: bucketAbi, functionName: 'reserveUsd' }),
+    publicClient.readContract({ address: engine, abi: bucketAbi, functionName: 'mintHeadroomUsd' }),
+    publicClient.readContract({
+      address: token,
+      abi: tokenAbi,
+      functionName: 'balanceOf',
+      args: [address],
+    }),
+    publicClient.readContract({
+      address: token,
+      abi: tokenAbi,
+      functionName: 'allowance',
+      args: [address, engine],
+    }),
+    publicClient.readContract({
+      address: deployments.oracle,
+      abi: oracleAbi,
+      functionName: 'ratePerUsd',
+      args: [currency],
+    }),
+    publicClient.readContract({
+      address: deployments.oracle,
+      abi: oracleAbi,
+      functionName: 'rateWindowNonce',
+      args: [currency],
+    }),
+  ])
+
+  return {
+    feeBps: Number(feeBps),
+    accruedFees: accruedFees as bigint,
+    vaultBalance: vaultBalance as bigint,
+    collateralUsd: collateralUsd as bigint,
+    liabilityUsd: liabilityUsd as bigint,
+    reserveUsd: reserveUsd as bigint,
+    mintHeadroomUsd: mintHeadroomUsd as bigint,
+    tokenBalance: tokenBalance as bigint,
+    tokenAllowance: tokenAllowance as bigint,
+    ratePerUsd: ratePerUsd as bigint,
+    rateWindowNonce: rateWindowNonce as bigint,
+  }
+}
+
 export function useProtocolController() {
   const { address, publicClient, walletClient } = useWallet()
   const [state, setState] = useState<ProtocolState>(empty)
+  const [activeBucket, setActiveBucket] = useState<BucketId>('clp')
   const [readError, setReadError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const [txs, setTxs] = useState<TxEntry[]>([])
@@ -137,7 +226,7 @@ export function useProtocolController() {
   const refresh = useCallback(async () => {
     if (!deployed) return
     try {
-      const engine = deployments.engine
+      const hub = deployments.hub
       const [
         windowOpen,
         paused,
@@ -145,76 +234,57 @@ export function useProtocolController() {
         windowEndBlock,
         windowDurationBlocks,
         windowBlocksRemaining,
-        feeBps,
-        accruedFees,
-        vaultBalance,
-        collateralUsd,
-        liabilityUsd,
-        reserveUsd,
-        mintHeadroomUsd,
         withdrawalWindowActive,
         withdrawalWindowStart,
         withdrawalBlocksRemaining,
-        mxpPerUsd,
-        rateWindowNonce,
         allowlisted,
+        allowlistedAccounts,
         usdBalance,
-        mxpBalance,
-        usdAllowance,
-        mxpAllowance,
+        usdAllowanceClp,
+        usdAllowanceArs,
         blockNumber,
+        clpBucket,
+        arsBucket,
       ] = await Promise.all([
-        publicClient.readContract({ address: engine, abi: engineAbi, functionName: 'windowOpen' }),
-        publicClient.readContract({ address: engine, abi: engineAbi, functionName: 'paused' }),
-        publicClient.readContract({ address: engine, abi: engineAbi, functionName: 'windowNonce' }),
-        publicClient.readContract({ address: engine, abi: engineAbi, functionName: 'windowEndBlock' }),
+        publicClient.readContract({ address: hub, abi: hubAbi, functionName: 'windowOpen' }),
+        publicClient.readContract({ address: hub, abi: hubAbi, functionName: 'paused' }),
+        publicClient.readContract({ address: hub, abi: hubAbi, functionName: 'windowNonce' }),
+        publicClient.readContract({ address: hub, abi: hubAbi, functionName: 'windowEndBlock' }),
         publicClient.readContract({
-          address: engine,
-          abi: engineAbi,
+          address: hub,
+          abi: hubAbi,
           functionName: 'windowDurationBlocks',
         }),
         publicClient.readContract({
-          address: engine,
-          abi: engineAbi,
+          address: hub,
+          abi: hubAbi,
           functionName: 'windowBlocksRemaining',
         }),
-        publicClient.readContract({ address: engine, abi: engineAbi, functionName: 'feeBps' }),
-        publicClient.readContract({ address: engine, abi: engineAbi, functionName: 'accruedFees' }),
-        publicClient.readContract({ address: engine, abi: engineAbi, functionName: 'vaultBalance' }),
-        publicClient.readContract({ address: engine, abi: engineAbi, functionName: 'collateralUsd' }),
-        publicClient.readContract({ address: engine, abi: engineAbi, functionName: 'liabilityUsd' }),
-        publicClient.readContract({ address: engine, abi: engineAbi, functionName: 'reserveUsd' }),
-        publicClient.readContract({ address: engine, abi: engineAbi, functionName: 'mintHeadroomUsd' }),
         publicClient.readContract({
-          address: engine,
-          abi: engineAbi,
+          address: hub,
+          abi: hubAbi,
           functionName: 'withdrawalWindowActive',
         }),
         publicClient.readContract({
-          address: engine,
-          abi: engineAbi,
+          address: hub,
+          abi: hubAbi,
           functionName: 'withdrawalWindowStart',
         }),
         publicClient.readContract({
-          address: engine,
-          abi: engineAbi,
+          address: hub,
+          abi: hubAbi,
           functionName: 'withdrawalBlocksRemaining',
         }),
         publicClient.readContract({
-          address: deployments.oracle,
-          abi: oracleAbi,
-          functionName: 'mxpPerUsd',
-        }),
-        publicClient.readContract({
-          address: deployments.oracle,
-          abi: oracleAbi,
-          functionName: 'rateWindowNonce',
-        }),
-        publicClient.readContract({
-          address: engine,
-          abi: engineAbi,
-          functionName: 'allowlist',
+          address: hub,
+          abi: hubAbi,
+          functionName: 'isAllowlisted',
           args: [address],
+        }),
+        publicClient.readContract({
+          address: hub,
+          abi: hubAbi,
+          functionName: 'allowlistedAccounts',
         }),
         publicClient.readContract({
           address: deployments.usd,
@@ -223,24 +293,20 @@ export function useProtocolController() {
           args: [address],
         }),
         publicClient.readContract({
-          address: deployments.mxp,
-          abi: mxpAbi,
-          functionName: 'balanceOf',
-          args: [address],
+          address: deployments.usd,
+          abi: usdAbi,
+          functionName: 'allowance',
+          args: [address, deployments.buckets.clp.engine],
         }),
         publicClient.readContract({
           address: deployments.usd,
           abi: usdAbi,
           functionName: 'allowance',
-          args: [address, engine],
-        }),
-        publicClient.readContract({
-          address: deployments.mxp,
-          abi: mxpAbi,
-          functionName: 'allowance',
-          args: [address, engine],
+          args: [address, deployments.buckets.ars.engine],
         }),
         publicClient.getBlockNumber(),
+        readBucket(publicClient, 'clp', address),
+        readBucket(publicClient, 'ars', address),
       ])
 
       setState({
@@ -250,24 +316,16 @@ export function useProtocolController() {
         windowEndBlock: windowEndBlock as bigint,
         windowDurationBlocks: windowDurationBlocks as bigint,
         windowBlocksRemaining: windowBlocksRemaining as bigint,
-        feeBps: Number(feeBps),
-        accruedFees: accruedFees as bigint,
-        vaultBalance: vaultBalance as bigint,
-        collateralUsd: collateralUsd as bigint,
-        liabilityUsd: liabilityUsd as bigint,
-        reserveUsd: reserveUsd as bigint,
-        mintHeadroomUsd: mintHeadroomUsd as bigint,
         withdrawalWindowActive: withdrawalWindowActive as boolean,
         withdrawalWindowStart: withdrawalWindowStart as bigint,
         withdrawalBlocksRemaining: withdrawalBlocksRemaining as bigint,
-        mxpPerUsd: mxpPerUsd as bigint,
-        rateWindowNonce: rateWindowNonce as bigint,
         allowlisted: allowlisted as boolean,
+        allowlistedAccounts: allowlistedAccounts as Address[],
         usdBalance: usdBalance as bigint,
-        mxpBalance: mxpBalance as bigint,
-        usdAllowance: usdAllowance as bigint,
-        mxpAllowance: mxpAllowance as bigint,
+        usdAllowanceClp: usdAllowanceClp as bigint,
+        usdAllowanceArs: usdAllowanceArs as bigint,
         blockNumber: blockNumber as bigint,
+        buckets: { clp: clpBucket, ars: arsBucket },
       })
       setReadError(null)
     } catch (e) {
@@ -304,12 +362,27 @@ export function useProtocolController() {
     [pushTx, patchTx, publicClient, refresh],
   )
 
-  const writeEngine = useCallback(
+  const writeHub = useCallback(
     (functionName: string, args: readonly unknown[] = []) =>
-      run(`engine.${functionName}`, async () =>
+      run(`hub.${functionName}`, async () =>
         walletClient.writeContract({
-          address: deployments.engine,
-          abi: engineAbi,
+          address: deployments.hub,
+          abi: hubAbi,
+          functionName,
+          args,
+          chain: walletClient.chain,
+          account: walletClient.account!,
+        }),
+      ),
+    [run, walletClient],
+  )
+
+  const writeBucket = useCallback(
+    (bucket: BucketId, functionName: string, args: readonly unknown[] = []) =>
+      run(`${bucket}.${functionName}`, async () =>
+        walletClient.writeContract({
+          address: deployments.buckets[bucket].engine,
+          abi: bucketAbi,
           functionName,
           args,
           chain: walletClient.chain,
@@ -349,12 +422,12 @@ export function useProtocolController() {
     [run, walletClient],
   )
 
-  const writeMxp = useCallback(
-    (functionName: string, args: readonly unknown[] = []) =>
-      run(`mxp.${functionName}`, async () =>
+  const writeToken = useCallback(
+    (bucket: BucketId, functionName: string, args: readonly unknown[] = []) =>
+      run(`${bucket}Token.${functionName}`, async () =>
         walletClient.writeContract({
-          address: deployments.mxp,
-          abi: mxpAbi,
+          address: deployments.buckets[bucket].token,
+          abi: tokenAbi,
           functionName,
           args,
           chain: walletClient.chain,
@@ -364,9 +437,26 @@ export function useProtocolController() {
     [run, walletClient],
   )
 
+  const active = state.buckets[activeBucket]
+
+  /// Mint/redeem require a non-zero rate stamped with the current hub window nonce.
+  const rateValid = useCallback(
+    (bucket: BucketId) => {
+      const b = state.buckets[bucket]
+      return b.ratePerUsd !== 0n && b.rateWindowNonce === state.windowNonce
+    },
+    [state],
+  )
+
   return {
     deployed,
     state,
+    activeBucket,
+    setActiveBucket,
+    active,
+    rateValid,
+    activeRateValid: rateValid(activeBucket),
+    bucketIds: BUCKET_IDS,
     readError,
     busy,
     txs,
@@ -375,25 +465,38 @@ export function useProtocolController() {
     formatEth: formatEther,
     parseEth: parseEther,
     mintUsd: (to: Address, amount: string) => writeUsd('mint', [to, parseEther(amount)]),
-    openWindow: () => writeEngine('openWindow'),
-    closeWindow: () => writeEngine('closeWindow'),
-    pause: () => writeEngine('pause'),
-    unpause: () => writeEngine('unpause'),
-    setFeeBps: (bps: number) => writeEngine('setFeeBps', [bps]),
+    openWindow: () => writeHub('openWindow'),
+    closeWindow: () => writeHub('closeWindow'),
+    pause: () => writeHub('pause'),
+    unpause: () => writeHub('unpause'),
     setAllowlist: (account: Address, allowed: boolean) =>
-      writeEngine('setAllowlist', [account, allowed]),
-    depositReserve: (amount: string) => writeEngine('depositReserve', [parseEther(amount)]),
-    withdrawReserve: (amount: string) => writeEngine('withdrawReserve', [parseEther(amount)]),
-    withdrawFees: (amount: string) => writeEngine('withdrawFees', [parseEther(amount)]),
-    mint: (amount: string) => writeEngine('mint', [parseEther(amount)]),
-    redeem: (amount: string) => writeEngine('redeem', [parseEther(amount)]),
-    setRate: (mxpPerUsd: string) => writeOracle('setRate', [parseEther(mxpPerUsd)]),
-    approveUsd: (amount: string) =>
-      writeUsd('approve', [deployments.engine, parseEther(amount)]),
-    approveMxp: (amount: string) =>
-      writeMxp('approve', [deployments.engine, parseEther(amount)]),
-    approveUsdMax: () => writeUsd('approve', [deployments.engine, parseEther('1000000000')]),
-    approveMxpMax: () => writeMxp('approve', [deployments.engine, parseEther('1000000000')]),
+      writeHub('setAllowlist', [account, allowed]),
+    setFeeBps: (bps: number, bucket: BucketId = activeBucket) =>
+      writeBucket(bucket, 'setFeeBps', [bps]),
+    depositReserve: (amount: string, bucket: BucketId = activeBucket) =>
+      writeBucket(bucket, 'depositReserve', [parseEther(amount)]),
+    withdrawReserve: (amount: string, bucket: BucketId = activeBucket) =>
+      writeBucket(bucket, 'withdrawReserve', [parseEther(amount)]),
+    withdrawFees: (amount: string, bucket: BucketId = activeBucket) =>
+      writeBucket(bucket, 'withdrawFees', [parseEther(amount)]),
+    mint: (amount: string, bucket: BucketId = activeBucket) =>
+      writeBucket(bucket, 'mint', [parseEther(amount)]),
+    redeem: (amount: string, bucket: BucketId = activeBucket) =>
+      writeBucket(bucket, 'redeem', [parseEther(amount)]),
+    setRate: (currency: BucketId, rate: string) =>
+      writeOracle('setRate', [CURRENCY[currency], parseEther(rate)]),
+    approveUsdMax: (bucket: BucketId = activeBucket) =>
+      writeUsd('approve', [deployments.buckets[bucket].engine, parseEther('1000000000')]),
+    approveTokenMax: (bucket: BucketId = activeBucket) =>
+      writeToken(bucket, 'approve', [
+        deployments.buckets[bucket].engine,
+        parseEther('1000000000'),
+      ]),
+    transfer: (token: TransferToken, to: Address, amount: string) => {
+      const value = parseEther(amount)
+      if (token === 'usd') return writeUsd('transfer', [to, value])
+      return writeToken(token, 'transfer', [to, value])
+    },
   }
 }
 

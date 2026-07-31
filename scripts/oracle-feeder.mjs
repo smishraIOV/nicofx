@@ -1,15 +1,18 @@
 #!/usr/bin/env node
 /**
- * Oracle feeder — pulls USD→MXN from a free FX API and posts mxpPerUsd on-chain.
+ * Oracle feeder — pulls USD→CLP and USD→ARS from a free FX API and posts rates on-chain.
  *
  * Prerequisites:
  *   - anvil running
  *   - contracts deployed (app/src/contracts/deployments.json)
- *   - MRW open and engine not paused
+ *   - MRW open and hub not paused
  *
  * Usage:
  *   node scripts/oracle-feeder.mjs
  *   node scripts/oracle-feeder.mjs --once
+ *   node scripts/oracle-feeder.mjs --currency clp
+ *   node scripts/oracle-feeder.mjs --currency ars
+ *   node scripts/oracle-feeder.mjs --currency both
  *   RPC_URL=http://127.0.0.1:8545 INTERVAL_MS=30000 node scripts/oracle-feeder.mjs
  */
 
@@ -29,30 +32,45 @@ const ORACLE_KEY =
   '0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d'
 const once = process.argv.includes('--once')
 
+const CURRENCY = { clp: 0, ars: 1 }
+
+function parseCurrencyArg() {
+  const idx = process.argv.indexOf('--currency')
+  if (idx === -1) return 'both'
+  const value = (process.argv[idx + 1] || 'both').toLowerCase()
+  if (value === 'clp' || value === 'ars' || value === 'both') return value
+  throw new Error(`Invalid --currency ${value} (use clp|ars|both)`)
+}
+
+const currencyMode = parseCurrencyArg()
+
 function loadDeployments() {
   const raw = readFileSync(deploymentsPath, 'utf8')
   const d = JSON.parse(raw)
   if (!d.oracle || d.oracle === '0x0000000000000000000000000000000000000000') {
     throw new Error('deployments.json has zero oracle address — deploy first')
   }
+  if (!d.hub) throw new Error('deployments.json missing hub — redeploy with multicurrency script')
   return d
 }
 
-async function fetchMxpPerUsd() {
-  // Frankfurter: ECB-sourced daily rates (free, no key)
-  const url = 'https://api.frankfurter.app/latest?from=USD&to=MXN'
+async function fetchRates() {
+  const url = 'https://open.er-api.com/v6/latest/USD'
   const res = await fetch(url)
   if (!res.ok) throw new Error(`FX API HTTP ${res.status}`)
   const data = await res.json()
-  const mxn = data?.rates?.MXN
-  if (typeof mxn !== 'number' || !(mxn > 0)) {
-    throw new Error(`Unexpected FX payload: ${JSON.stringify(data)}`)
+  const clp = data?.rates?.CLP
+  const ars = data?.rates?.ARS
+  if (typeof clp !== 'number' || !(clp > 0)) {
+    throw new Error(`Unexpected CLP rate: ${JSON.stringify(data?.rates?.CLP)}`)
   }
-  return mxn
+  if (typeof ars !== 'number' || !(ars > 0)) {
+    throw new Error(`Unexpected ARS rate: ${JSON.stringify(data?.rates?.ARS)}`)
+  }
+  return { clp, ars }
 }
 
 function toWei18(rate) {
-  // Avoid float dust: use 8 decimal places then pad to 18
   const fixed = rate.toFixed(8)
   const [whole, frac = ''] = fixed.split('.')
   return BigInt(whole + frac.padEnd(18, '0').slice(0, 18))
@@ -72,17 +90,18 @@ function readBool(address, sig) {
   return out === 'true' || out.endsWith('1')
 }
 
-async function postRate(deployments, rateWei) {
-  const engine = deployments.engine
-  const windowOpen = readBool(engine, 'windowOpen()(bool)')
-  const paused = readBool(engine, 'paused()(bool)')
+function postRate(deployments, currencyId, rateWei) {
+  const hub = deployments.hub
+  const windowOpen = readBool(hub, 'windowOpen()(bool)')
+  const paused = readBool(hub, 'paused()(bool)')
   if (!windowOpen) throw new Error('MRW is closed — open window before posting')
-  if (paused) throw new Error('Engine is paused — unpause before posting')
+  if (paused) throw new Error('Hub is paused — unpause before posting')
 
-  const tx = cast([
+  return cast([
     'send',
     deployments.oracle,
-    'setRate(uint256)',
+    'setRate(uint8,uint256)',
+    String(currencyId),
     rateWei.toString(),
     '--private-key',
     ORACLE_KEY,
@@ -90,20 +109,32 @@ async function postRate(deployments, rateWei) {
     RPC_URL,
     '--legacy',
   ])
-  return tx
 }
 
 async function tick() {
   const deployments = loadDeployments()
-  const mxn = await fetchMxpPerUsd()
-  const rateWei = toWei18(mxn)
-  console.log(`[feeder] USD/MXN=${mxn} → mxpPerUsd=${rateWei}`)
-  const tx = await postRate(deployments, rateWei)
-  console.log(`[feeder] posted ok\n${tx}`)
+  const rates = await fetchRates()
+
+  const jobs = []
+  if (currencyMode === 'clp' || currencyMode === 'both') {
+    jobs.push({ id: 'clp', currencyId: CURRENCY.clp, rate: rates.clp })
+  }
+  if (currencyMode === 'ars' || currencyMode === 'both') {
+    jobs.push({ id: 'ars', currencyId: CURRENCY.ars, rate: rates.ars })
+  }
+
+  for (const job of jobs) {
+    const rateWei = toWei18(job.rate)
+    console.log(`[feeder] USD/${job.id.toUpperCase()}=${job.rate} → ratePerUsd=${rateWei}`)
+    const tx = postRate(deployments, job.currencyId, rateWei)
+    console.log(`[feeder] posted ${job.id} ok\n${tx}`)
+  }
 }
 
 async function main() {
-  console.log(`[feeder] rpc=${RPC_URL} interval=${INTERVAL_MS}ms once=${once}`)
+  console.log(
+    `[feeder] rpc=${RPC_URL} interval=${INTERVAL_MS}ms once=${once} currency=${currencyMode}`,
+  )
   if (once) {
     await tick()
     return

@@ -327,9 +327,78 @@ button:disabled {
   font-size: 0.85rem;
 }
 
+.stale {
+  color: var(--warn);
+}
+
+.allowlist-actions {
+  display: flex;
+  gap: 0.35rem;
+}
+
 .allowlist code {
   color: var(--muted);
   font-size: 0.78rem;
+}
+
+.bucket-row {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.bucket-label {
+  font-size: 0.78rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+}
+
+.bucket-switcher {
+  display: inline-flex;
+  gap: 0.35rem;
+  padding: 0.2rem;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--bg0);
+}
+
+.bucket-switcher button {
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  padding: 0.35rem 0.9rem;
+  border-radius: 999px;
+  cursor: pointer;
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
+.bucket-switcher button.active {
+  background: var(--accent);
+  color: #0c1412;
+}
+
+.panel-body > .bucket-switcher {
+  margin-bottom: 0.75rem;
+}
+
+.transfer-box {
+  margin-top: 1rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--line);
+}
+
+.transfer-box h3 {
+  margin: 0 0 0.35rem;
+  font-size: 0.95rem;
+}
+
+.account-card p {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
 }
 
 .allowlist .yes {

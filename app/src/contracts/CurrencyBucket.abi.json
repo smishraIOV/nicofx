@@ -19,6 +19,19 @@
   },
   {
     "type": "function",
+    "name": "BUCKET_ADMIN_ROLE",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "BUFFER_BPS",
     "inputs": [],
     "outputs": [
@@ -45,19 +58,6 @@
   },
   {
     "type": "function",
-    "name": "DEFAULT_WINDOW_DURATION_BLOCKS",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
     "name": "MAX_FEE_BPS",
     "inputs": [],
     "outputs": [
@@ -65,19 +65,6 @@
         "name": "",
         "type": "uint16",
         "internalType": "uint16"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "MXP_ADMIN_ROLE",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "bytes32",
-        "internalType": "bytes32"
       }
     ],
     "stateMutability": "view"
@@ -123,19 +110,6 @@
   },
   {
     "type": "function",
-    "name": "WITHDRAWAL_WINDOW_BLOCKS",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
     "name": "accruedFees",
     "inputs": [],
     "outputs": [
@@ -149,32 +123,6 @@
   },
   {
     "type": "function",
-    "name": "allowlist",
-    "inputs": [
-      {
-        "name": "",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "",
-        "type": "bool",
-        "internalType": "bool"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "closeWindow",
-    "inputs": [],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
     "name": "collateralUsd",
     "inputs": [],
     "outputs": [
@@ -182,6 +130,19 @@
         "name": "",
         "type": "uint256",
         "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "currency",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint8",
+        "internalType": "uint8"
       }
     ],
     "stateMutability": "view"
@@ -275,6 +236,19 @@
   },
   {
     "type": "function",
+    "name": "hub",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "contract IProtocolHub"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "initialize",
     "inputs": [
       {
@@ -288,7 +262,7 @@
         "internalType": "address"
       },
       {
-        "name": "mxp_",
+        "name": "token_",
         "type": "address",
         "internalType": "address"
       },
@@ -296,6 +270,16 @@
         "name": "oracle_",
         "type": "address",
         "internalType": "address"
+      },
+      {
+        "name": "hub_",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "currency_",
+        "type": "uint8",
+        "internalType": "uint8"
       }
     ],
     "outputs": [],
@@ -342,26 +326,6 @@
   },
   {
     "type": "function",
-    "name": "mxp",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "address",
-        "internalType": "contract MXP"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "openWindow",
-    "inputs": [],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
     "name": "oracle",
     "inputs": [],
     "outputs": [
@@ -369,26 +333,6 @@
         "name": "",
         "type": "address",
         "internalType": "contract IOracle"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "pause",
-    "inputs": [],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "paused",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "bool",
-        "internalType": "bool"
       }
     ],
     "stateMutability": "view"
@@ -411,7 +355,7 @@
     "name": "redeem",
     "inputs": [
       {
-        "name": "mxpAmount",
+        "name": "tokenAmount",
         "type": "uint256",
         "internalType": "uint256"
       }
@@ -483,43 +427,12 @@
   },
   {
     "type": "function",
-    "name": "setAllowlist",
-    "inputs": [
-      {
-        "name": "account",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "allowed",
-        "type": "bool",
-        "internalType": "bool"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
     "name": "setFeeBps",
     "inputs": [
       {
         "name": "feeBps_",
         "type": "uint16",
         "internalType": "uint16"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "setWindowDurationBlocks",
-    "inputs": [
-      {
-        "name": "durationBlocks",
-        "type": "uint256",
-        "internalType": "uint256"
       }
     ],
     "outputs": [],
@@ -546,10 +459,16 @@
   },
   {
     "type": "function",
-    "name": "unpause",
+    "name": "token",
     "inputs": [],
-    "outputs": [],
-    "stateMutability": "nonpayable"
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "contract SettlementToken"
+      }
+    ],
+    "stateMutability": "view"
   },
   {
     "type": "function",
@@ -597,71 +516,6 @@
   },
   {
     "type": "function",
-    "name": "windowBlocksRemaining",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "windowDurationBlocks",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "windowEndBlock",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "windowNonce",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "windowOpen",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "bool",
-        "internalType": "bool"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
     "name": "withdrawFees",
     "inputs": [
       {
@@ -685,64 +539,6 @@
     ],
     "outputs": [],
     "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "withdrawalBlocksRemaining",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "withdrawalWindowActive",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "bool",
-        "internalType": "bool"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "withdrawalWindowStart",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "event",
-    "name": "AllowlistUpdated",
-    "inputs": [
-      {
-        "name": "account",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      },
-      {
-        "name": "allowed",
-        "type": "bool",
-        "indexed": false,
-        "internalType": "bool"
-      }
-    ],
-    "anonymous": false
   },
   {
     "type": "event",
@@ -806,23 +602,10 @@
         "internalType": "uint256"
       },
       {
-        "name": "mxpOut",
+        "name": "tokenOut",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "Paused",
-    "inputs": [
-      {
-        "name": "account",
-        "type": "address",
-        "indexed": false,
-        "internalType": "address"
       }
     ],
     "anonymous": false
@@ -838,7 +621,7 @@
         "internalType": "address"
       },
       {
-        "name": "mxpBurned",
+        "name": "tokenBurned",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
@@ -979,19 +762,6 @@
   },
   {
     "type": "event",
-    "name": "Unpaused",
-    "inputs": [
-      {
-        "name": "account",
-        "type": "address",
-        "indexed": false,
-        "internalType": "address"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
     "name": "Upgraded",
     "inputs": [
       {
@@ -999,63 +769,6 @@
         "type": "address",
         "indexed": true,
         "internalType": "address"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "WindowClosed",
-    "inputs": [
-      {
-        "name": "windowNonce",
-        "type": "uint256",
-        "indexed": true,
-        "internalType": "uint256"
-      },
-      {
-        "name": "withdrawalWindowStart",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "WindowDurationUpdated",
-    "inputs": [
-      {
-        "name": "durationBlocks",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "WindowOpened",
-    "inputs": [
-      {
-        "name": "windowNonce",
-        "type": "uint256",
-        "indexed": true,
-        "internalType": "uint256"
-      },
-      {
-        "name": "endBlock",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "durationBlocks",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
       }
     ],
     "anonymous": false
@@ -1110,22 +823,17 @@
   },
   {
     "type": "error",
-    "name": "EnforcedPause",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "ExpectedPause",
-    "inputs": []
-  },
-  {
-    "type": "error",
     "name": "FailedCall",
     "inputs": []
   },
   {
     "type": "error",
     "name": "FeeTooHigh",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "HubPaused",
     "inputs": []
   },
   {
@@ -1150,12 +858,12 @@
   },
   {
     "type": "error",
-    "name": "InvalidInitialization",
+    "name": "InvalidCurrency",
     "inputs": []
   },
   {
     "type": "error",
-    "name": "InvalidWindowDuration",
+    "name": "InvalidInitialization",
     "inputs": []
   },
   {
@@ -1199,16 +907,6 @@
         "internalType": "bytes32"
       }
     ]
-  },
-  {
-    "type": "error",
-    "name": "WindowAlreadyClosed",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "WindowAlreadyOpen",
-    "inputs": []
   },
   {
     "type": "error",

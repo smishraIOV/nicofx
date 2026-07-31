@@ -1,8 +1,8 @@
 # FX devaluation risk
 
-The protocol assumes the **USD** token stays at par with the US dollar (see [readme](./readme.md)). It does **not** assume a stable MXP/USD (peso) rate.
+The protocol assumes the **USD** token stays at par with the US dollar (see [readme](./readme.md)). It does **not** assume a stable CLP/USD rate.
 
-The 10% overcollateralization buffer absorbs limited adverse FX moves. If the dollar falls enough against the peso that the dollar value of outstanding MXP exceeds vault USD (roughly more than a ~10% adverse move vs the rate that funded the buffer), full par redemptions are no longer fully backed for every holder.
+The 10% overcollateralization buffer absorbs limited adverse FX moves. If the dollar falls enough against the CLP that the dollar value of outstanding CLP exceeds vault USD (roughly more than a ~10% adverse move vs the rate that funded the buffer), full par redemptions are no longer fully backed for every holder.
 
 Because the oracle can update the rate only while MRW is open, a large update at or after window open can tip the system underwater while mint/redeem are live.
 
@@ -11,19 +11,19 @@ Because the oracle can update the rate only while MRW is open, a large update at
 **First-come, first-served (race)** with **proportional burn** on shortfall:
 
 1. Compute full `usdOut` at the oracle rate.
-2. If `collateralUsd >= grossUsd`, pay net (after fee) and burn all `mxpIn`.
-3. If `0 < collateralUsd < grossUsd`, settle `usdCap = collateralUsd`, burn `mxpBurned = mxpIn * usdCap / grossUsd` (floor), apply redeem fee on `usdCap` into `accruedFees`, send net USD to the user; unburned MXP stays with the user. Accrued fees are not available to the race.
+2. If `collateralUsd >= grossUsd`, pay net (after fee) and burn all `clpIn`.
+3. If `0 < collateralUsd < grossUsd`, settle `usdCap = collateralUsd`, burn `clpBurned = clpIn * usdCap / grossUsd` (floor), apply redeem fee on `usdCap` into `accruedFees`, send net USD to the user; unburned CLP stays with the user. Accrued fees are not available to the race.
 4. If `collateralUsd == 0`, revert.
 
 Early redeemers exit at par while USD lasts; later ones take a partial fill or fail when empty. Unfair under contention; acceptable as an experimental default.
 
-`MXPEngine` is also **Pausable**, but only **MXP_Admin** may pause/unpause. That is a manual emergency stop, not an automatic undercollateralization response — v1 does not auto-pause on FX shocks.
+`ProtocolHub` is also **Pausable** (shared across buckets), but only hub admin may pause/unpause. That is a manual emergency stop, not an automatic undercollateralization response — v1 does not auto-pause on FX shocks. Each currency has an isolated USD vault, so a shock in one bucket does not drain another.
 
 ## Options considered
 
 ### 1. First-come, first-served (race) — **selected for v1**
 
-Redeem at full oracle rate while **collateral** can pay. On shortfall: settle against `collateralUsd` only (not `accruedFees`), burn MXP proportionally, accrue redeem fee; revert only if collateral is empty.
+Redeem at full oracle rate while **collateral** can pay. On shortfall: settle against `collateralUsd` only (not `accruedFees`), burn CLP proportionally, accrue redeem fee; revert only if collateral is empty.
 
 - **Pros:** Simple; no global haircut accounting; matches “exit while you can.”
 - **Cons:** Unfair to slower participants; gas wars; poor fit for a long-term enterprise product.
@@ -44,7 +44,7 @@ If `vaultUsd < liabilityUsd` (or below the 110% floor), auto-pause mint and rede
 
 ### 4. Admin recapitalization (mandatory top-up)
 
-Require MXP_Admin to `depositReserve` before MRW can open (or before any redeem) when undercollateralized; optionally block `openWindow` until `vault >= 1.10 * liability`.
+Require bucket admin to `depositReserve` before MRW can open (or before any redeem) when undercollateralized; optionally block hub `openWindow` until `vault >= 1.10 * liability`.
 
 - **Pros:** Restores the par-redemption promise; natural for an enterprise/admin-run system.
 - **Cons:** Depends on admin having USD ready; the window may stay closed indefinitely.
@@ -58,14 +58,14 @@ Oracle `setRate` reverts if the new rate would push `liabilityUsd` above `vaultU
 
 ### 6. Partial fills only (soft race)
 
-Redeem up to available backing; return unused MXP; no global haircut formula — `min(requested, remainingBacking)`.
+Redeem up to available backing; return unused CLP; no global haircut formula — `min(requested, remainingBacking)`.
 
 - **Pros:** Does not oversell the vault; simpler than pro-rata accounting.
 - **Cons:** Still ordered by who transacts first; last in line waits or fails.
 
 ### 7. Settlement / shortfall auction
 
-When undercollateralized, auction MXP for remaining USD, or auction redemption rights at a clearing price.
+When undercollateralized, auction CLP for remaining USD, or auction redemption rights at a clearing price.
 
 - **Pros:** Market discovers the shortfall price.
 - **Cons:** Heavy for v1; awkward for a small allowlisted set.

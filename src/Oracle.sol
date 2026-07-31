@@ -2,28 +2,31 @@
 pragma solidity ^0.8.28;
 
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
-import {IEngineView} from "./interfaces/IEngineView.sol";
 
-/// @title Oracle — trusted MXP/USD rate publisher (non-upgradeable v1)
-/// @notice Rate format: mxpPerUsd with 18 decimals. setRate only while MRW open and engine not paused.
+import {Currency} from "./Currency.sol";
+import {IProtocolHub} from "./interfaces/IProtocolHub.sol";
+
+/// @title Oracle — trusted multi-currency FX rate publisher (non-upgradeable)
+/// @notice Rates are units-of-currency per 1 USD with 18 decimals. setRate only while hub MRW open and not paused.
 contract Oracle is Ownable {
-    IEngineView public engine;
+    IProtocolHub public hub;
     address public trustedOracle;
 
-    uint256 public mxpPerUsd;
-    uint256 public rateWindowNonce;
-    uint256 public lastUpdated;
+    mapping(uint8 => uint256) private _ratePerUsd;
+    mapping(uint8 => uint256) private _rateWindowNonce;
+    mapping(uint8 => uint256) private _lastUpdated;
 
-    event EngineUpdated(address indexed engine);
+    event HubUpdated(address indexed hub);
     event TrustedOracleUpdated(address indexed trustedOracle);
-    event RateUpdated(uint256 mxpPerUsd, uint256 windowNonce, uint256 timestamp);
+    event RateUpdated(uint8 indexed currency, uint256 ratePerUsd, uint256 windowNonce, uint256 timestamp);
 
     error ZeroAddress();
     error ZeroRate();
-    error EngineNotSet();
+    error HubNotSet();
     error WindowClosed();
-    error EnginePaused();
+    error HubPaused();
     error NotTrustedOracle();
+    error InvalidCurrency();
 
     constructor(address owner_, address trustedOracle_) Ownable(owner_) {
         if (trustedOracle_ == address(0)) revert ZeroAddress();
@@ -31,10 +34,10 @@ contract Oracle is Ownable {
         emit TrustedOracleUpdated(trustedOracle_);
     }
 
-    function setEngine(address engine_) external onlyOwner {
-        if (engine_ == address(0)) revert ZeroAddress();
-        engine = IEngineView(engine_);
-        emit EngineUpdated(engine_);
+    function setHub(address hub_) external onlyOwner {
+        if (hub_ == address(0)) revert ZeroAddress();
+        hub = IProtocolHub(hub_);
+        emit HubUpdated(hub_);
     }
 
     function setTrustedOracle(address trustedOracle_) external onlyOwner {
@@ -43,17 +46,39 @@ contract Oracle is Ownable {
         emit TrustedOracleUpdated(trustedOracle_);
     }
 
-    function setRate(uint256 mxpPerUsd_) external {
+    function setRate(uint8 currency, uint256 ratePerUsd_) external {
         if (msg.sender != trustedOracle) revert NotTrustedOracle();
-        if (address(engine) == address(0)) revert EngineNotSet();
-        if (!engine.windowOpen()) revert WindowClosed();
-        if (engine.paused()) revert EnginePaused();
-        if (mxpPerUsd_ == 0) revert ZeroRate();
+        if (address(hub) == address(0)) revert HubNotSet();
+        if (currency > Currency.ARS) revert InvalidCurrency();
+        if (!hub.windowOpen()) revert WindowClosed();
+        if (hub.paused()) revert HubPaused();
+        if (ratePerUsd_ == 0) revert ZeroRate();
 
-        mxpPerUsd = mxpPerUsd_;
-        rateWindowNonce = engine.windowNonce();
-        lastUpdated = block.timestamp;
+        uint256 nonce = hub.windowNonce();
+        _ratePerUsd[currency] = ratePerUsd_;
+        _rateWindowNonce[currency] = nonce;
+        _lastUpdated[currency] = block.timestamp;
 
-        emit RateUpdated(mxpPerUsd_, rateWindowNonce, lastUpdated);
+        emit RateUpdated(currency, ratePerUsd_, nonce, block.timestamp);
+    }
+
+    function ratePerUsd(uint8 currency) external view returns (uint256) {
+        return _ratePerUsd[currency];
+    }
+
+    function rateWindowNonce(uint8 currency) external view returns (uint256) {
+        return _rateWindowNonce[currency];
+    }
+
+    function lastUpdated(uint8 currency) external view returns (uint256) {
+        return _lastUpdated[currency];
+    }
+
+    function clpPerUsd() external view returns (uint256) {
+        return _ratePerUsd[Currency.CLP];
+    }
+
+    function arsPerUsd() external view returns (uint256) {
+        return _ratePerUsd[Currency.ARS];
     }
 }

@@ -1,7 +1,7 @@
-import { useEffect, useState, type FormEvent, type ReactNode } from 'react'
+import { useState, type FormEvent, type ReactNode } from 'react'
 import { type Address, formatEther, isAddress } from 'viem'
-import { deployments, engineAbi } from './contracts'
-import { useProtocol } from './useProtocol'
+import { bucketLabel, deployments } from './contracts'
+import { useProtocol, type TransferToken } from './useProtocol'
 import { ANVIL_ACCOUNTS } from './wagmi'
 import { useWallet } from './wallet'
 
@@ -9,13 +9,15 @@ function short(addr: string) {
   return `${addr.slice(0, 6)}…${addr.slice(-4)}`
 }
 
-function Field({
-  label,
-  children,
-}: {
-  label: string
-  children: ReactNode
-}) {
+async function copyText(text: string) {
+  try {
+    await navigator.clipboard.writeText(text)
+  } catch {
+    // ignore clipboard failures in non-secure contexts
+  }
+}
+
+function Field({ label, children }: { label: string; children: ReactNode }) {
   return (
     <label className="field">
       <span>{label}</span>
@@ -33,10 +35,34 @@ function Panel({ title, children }: { title: string; children: ReactNode }) {
   )
 }
 
+function BucketSwitcher() {
+  const { activeBucket, setActiveBucket, bucketIds } = useProtocol()
+  return (
+    <div className="bucket-switcher" role="group" aria-label="Currency bucket">
+      {bucketIds.map((id) => (
+        <button
+          key={id}
+          type="button"
+          className={activeBucket === id ? 'active' : ''}
+          onClick={() => setActiveBucket(id)}
+        >
+          {bucketLabel(id)}
+        </button>
+      ))}
+    </div>
+  )
+}
+
 function StatusBar() {
-  const { state, formatEth } = useProtocol()
+  const { state, activeBucket, active, formatEth, rateValid } = useProtocol()
   const rate =
-    state.mxpPerUsd === 0n ? '—' : Number(formatEther(state.mxpPerUsd)).toFixed(4)
+    active.ratePerUsd === 0n ? '—' : Number(formatEther(active.ratePerUsd)).toFixed(4)
+
+  const rateCell = (id: 'clp' | 'ars') => {
+    const b = state.buckets[id]
+    if (b.ratePerUsd === 0n) return 'unset'
+    return `${Number(formatEther(b.ratePerUsd)).toFixed(2)}${rateValid(id) ? '' : ' (stale)'}`
+  }
 
   return (
     <div className="status-bar">
@@ -53,24 +79,34 @@ function StatusBar() {
         </strong>
       </div>
       <div className="stat">
-        <span>Rate</span>
-        <strong>{rate} MXP/USD</strong>
+        <span>CLP rate</span>
+        <strong className={rateValid('clp') ? '' : 'stale'}>{rateCell('clp')}</strong>
       </div>
       <div className="stat">
-        <span>Headroom</span>
-        <strong>{formatEth(state.mintHeadroomUsd)} USD</strong>
+        <span>ARS rate</span>
+        <strong className={rateValid('ars') ? '' : 'stale'}>{rateCell('ars')}</strong>
       </div>
       <div className="stat">
-        <span>Collateral</span>
-        <strong>{formatEth(state.collateralUsd)} USD</strong>
+        <span>{bucketLabel(activeBucket)} headroom</span>
+        <strong>{formatEth(active.mintHeadroomUsd)} USD</strong>
       </div>
       <div className="stat">
-        <span>Liability</span>
-        <strong>{formatEth(state.liabilityUsd)} USD</strong>
+        <span>{bucketLabel(activeBucket)} collateral</span>
+        <strong>{formatEth(active.collateralUsd)} USD</strong>
       </div>
       <div className="stat">
-        <span>Fees</span>
-        <strong>{formatEth(state.accruedFees)} USD</strong>
+        <span>{bucketLabel(activeBucket)} liability</span>
+        <strong>{formatEth(active.liabilityUsd)} USD</strong>
+      </div>
+      <div className="stat">
+        <span>{bucketLabel(activeBucket)} fees</span>
+        <strong>{formatEth(active.accruedFees)} USD</strong>
+      </div>
+      <div className="stat">
+        <span>Active rate</span>
+        <strong>
+          {rate} {bucketLabel(activeBucket)}/USD
+        </strong>
       </div>
       <div className="stat">
         <span>Withdraw win</span>
@@ -123,40 +159,61 @@ function TxStrip() {
   )
 }
 
+function AllowlistList({
+  onPick,
+}: {
+  onPick?: (addr: Address) => void
+}) {
+  const { state } = useProtocol()
+  const accounts = state.allowlistedAccounts
+
+  if (accounts.length === 0) {
+    return <p className="hint">No allowlisted accounts yet.</p>
+  }
+
+  return (
+    <ul className="allowlist">
+      {accounts.map((addr) => {
+        const meta = ANVIL_ACCOUNTS.find(
+          (a) => a.address.toLowerCase() === addr.toLowerCase(),
+        )
+        return (
+          <li key={addr}>
+            <span>
+              {meta ? `#${meta.index} ${meta.label}` : 'allowlisted'}
+            </span>
+            <code title={addr}>{short(addr)}</code>
+            <div className="allowlist-actions">
+              <button type="button" className="ghost-sm" onClick={() => void copyText(addr)}>
+                Copy
+              </button>
+              {onPick && (
+                <button type="button" className="ghost-sm" onClick={() => onPick(addr)}>
+                  Use
+                </button>
+              )}
+            </div>
+          </li>
+        )
+      })}
+    </ul>
+  )
+}
+
 function AdminPanel() {
   const p = useProtocol()
-  const { address, publicClient } = useWallet()
+  const { address } = useWallet()
   const [mintTo, setMintTo] = useState<string>(address)
   const [mintAmt, setMintAmt] = useState('1000')
   const [reserveAmt, setReserveAmt] = useState('100')
-  const [feeBps, setFeeBps] = useState(String(p.state.feeBps || 50))
+  const [feeBps, setFeeBps] = useState(String(p.active.feeBps || 50))
   const [allowAddr, setAllowAddr] = useState<string>(ANVIL_ACCOUNTS[2].address)
   const [feeWithdraw, setFeeWithdraw] = useState('1')
-  const [allowStatuses, setAllowStatuses] = useState<Record<string, boolean>>({})
-
-  useEffect(() => {
-    let cancelled = false
-    ;(async () => {
-      const entries = await Promise.all(
-        ANVIL_ACCOUNTS.map(async (a) => {
-          const ok = (await publicClient.readContract({
-            address: deployments.engine,
-            abi: engineAbi,
-            functionName: 'allowlist',
-            args: [a.address],
-          })) as boolean
-          return [a.address.toLowerCase(), ok] as const
-        }),
-      )
-      if (!cancelled) setAllowStatuses(Object.fromEntries(entries))
-    })().catch(() => {})
-    return () => {
-      cancelled = true
-    }
-  }, [publicClient, p.txs, p.state.blockNumber])
 
   return (
     <Panel title="Admin">
+      <BucketSwitcher />
+
       <div className="actions">
         <button type="button" disabled={p.busy} onClick={() => void p.openWindow()}>
           Open MRW
@@ -171,30 +228,13 @@ function AdminPanel() {
           Unpause
         </button>
       </div>
+      <p className="hint">MRW and pause are shared across CLP and ARS. Reserves and fees are per bucket.</p>
 
       <div className="allowlist-box">
-        <h3>Allowlist (Anvil accounts)</h3>
-        <ul className="allowlist">
-          {ANVIL_ACCOUNTS.map((a) => {
-            const ok = allowStatuses[a.address.toLowerCase()]
-            return (
-              <li key={a.address}>
-                <span>
-                  #{a.index} {a.label}
-                </span>
-                <code>{short(a.address)}</code>
-                <strong className={ok ? 'yes' : 'no'}>
-                  {ok === undefined ? '…' : ok ? 'allowed' : 'blocked'}
-                </strong>
-              </li>
-            )
-          })}
-        </ul>
-        <p className="hint">
-          Mapping is not fully enumerable on-chain; this checks the known local accounts. Admin (#0)
-          is allowlisted at deploy.
-        </p>
+        <h3>Allowlist</h3>
+        <AllowlistList onPick={(addr) => setAllowAddr(addr)} />
       </div>
+
       <form
         className="form-row"
         onSubmit={(e: FormEvent) => {
@@ -221,17 +261,13 @@ function AdminPanel() {
           void p.approveUsdMax().then(() => p.depositReserve(reserveAmt))
         }}
       >
-        <Field label="Deposit reserve (USD)">
+        <Field label={`Deposit ${bucketLabel(p.activeBucket)} reserve (USD)`}>
           <input value={reserveAmt} onChange={(e) => setReserveAmt(e.target.value)} />
         </Field>
         <button type="submit" disabled={p.busy}>
           Approve + deposit
         </button>
-        <button
-          type="button"
-          disabled={p.busy}
-          onClick={() => void p.withdrawReserve(reserveAmt)}
-        >
+        <button type="button" disabled={p.busy} onClick={() => void p.withdrawReserve(reserveAmt)}>
           Withdraw reserve
         </button>
       </form>
@@ -243,7 +279,7 @@ function AdminPanel() {
           void p.setFeeBps(Number(feeBps))
         }}
       >
-        <Field label="Redeem fee (bps)">
+        <Field label={`${bucketLabel(p.activeBucket)} redeem fee (bps)`}>
           <input value={feeBps} onChange={(e) => setFeeBps(e.target.value)} />
         </Field>
         <button type="submit" disabled={p.busy}>
@@ -258,7 +294,7 @@ function AdminPanel() {
           void p.withdrawFees(feeWithdraw)
         }}
       >
-        <Field label="Withdraw fees (USD)">
+        <Field label={`Withdraw ${bucketLabel(p.activeBucket)} fees (USD)`}>
           <input value={feeWithdraw} onChange={(e) => setFeeWithdraw(e.target.value)} />
         </Field>
         <button type="submit" disabled={p.busy}>
@@ -290,6 +326,14 @@ function AdminPanel() {
         >
           Remove
         </button>
+        <button
+          type="button"
+          className="ghost-sm"
+          onClick={() => void copyText(allowAddr)}
+          disabled={!isAddress(allowAddr)}
+        >
+          Copy
+        </button>
       </form>
     </Panel>
   )
@@ -297,35 +341,70 @@ function AdminPanel() {
 
 function OraclePanel() {
   const p = useProtocol()
-  const [rate, setRate] = useState('17.2')
+  const [clpRate, setClpRate] = useState('950')
+  const [arsRate, setArsRate] = useState('1000')
   const canPost = p.state.windowOpen && !p.state.paused
 
   return (
     <Panel title="Oracle">
       <p className="hint">
-        Current on-chain rate:{' '}
+        Shared oracle. CLP:{' '}
         <strong>
-          {p.state.mxpPerUsd === 0n ? 'unset' : `${formatEther(p.state.mxpPerUsd)} MXP per USD`}
+          {p.state.buckets.clp.ratePerUsd === 0n
+            ? 'unset'
+            : `${formatEther(p.state.buckets.clp.ratePerUsd)}`}
         </strong>
-        . Rate window nonce {p.state.rateWindowNonce.toString()} / engine{' '}
-        {p.state.windowNonce.toString()}.
+        {' · '}
+        ARS:{' '}
+        <strong>
+          {p.state.buckets.ars.ratePerUsd === 0n
+            ? 'unset'
+            : `${formatEther(p.state.buckets.ars.ratePerUsd)}`}
+        </strong>
+        . Hub window nonce {p.state.windowNonce.toString()}.
+      </p>
+      <p className="hint">
+        Valid for this window — CLP:{' '}
+        <strong className={p.rateValid('clp') ? '' : 'stale'}>
+          {p.rateValid('clp') ? 'yes' : 'no'}
+        </strong>
+        {' · '}
+        ARS:{' '}
+        <strong className={p.rateValid('ars') ? '' : 'stale'}>
+          {p.rateValid('ars') ? 'yes' : 'no'}
+        </strong>
+        . Each new window requires fresh rates before mint/redeem.
       </p>
       <form
         className="form-row"
         onSubmit={(e) => {
           e.preventDefault()
-          void p.setRate(rate)
+          void p.setRate('clp', clpRate)
         }}
       >
-        <Field label="mxpPerUsd">
-          <input value={rate} onChange={(e) => setRate(e.target.value)} disabled={!canPost} />
+        <Field label="clpPerUsd">
+          <input value={clpRate} onChange={(e) => setClpRate(e.target.value)} disabled={!canPost} />
         </Field>
         <button type="submit" disabled={p.busy || !canPost}>
-          Post rate
+          Post CLP rate
+        </button>
+      </form>
+      <form
+        className="form-row"
+        onSubmit={(e) => {
+          e.preventDefault()
+          void p.setRate('ars', arsRate)
+        }}
+      >
+        <Field label="arsPerUsd">
+          <input value={arsRate} onChange={(e) => setArsRate(e.target.value)} disabled={!canPost} />
+        </Field>
+        <button type="submit" disabled={p.busy || !canPost}>
+          Post ARS rate
         </button>
       </form>
       {!canPost && (
-        <p className="hint warn-text">Posting requires MRW open and engine not paused.</p>
+        <p className="hint warn-text">Posting requires MRW open and hub not paused.</p>
       )}
     </Panel>
   )
@@ -336,17 +415,28 @@ function UserPanel() {
   const { address } = useWallet()
   const [mintAmt, setMintAmt] = useState('100')
   const [redeemAmt, setRedeemAmt] = useState('100')
+  const [transferToken, setTransferToken] = useState<TransferToken>('usd')
+  const [transferTo, setTransferTo] = useState('')
+  const [transferAmt, setTransferAmt] = useState('10')
+  const symbol = bucketLabel(p.activeBucket)
+  const canTrade = p.state.allowlisted && p.state.windowOpen && p.activeRateValid
 
   return (
     <Panel title="User">
+      <BucketSwitcher />
+
       <div className="balances">
         <div>
           <span>USD</span>
           <strong>{formatEther(p.state.usdBalance)}</strong>
         </div>
         <div>
-          <span>MXP</span>
-          <strong>{formatEther(p.state.mxpBalance)}</strong>
+          <span>CLP</span>
+          <strong>{formatEther(p.state.buckets.clp.tokenBalance)}</strong>
+        </div>
+        <div>
+          <span>ARS</span>
+          <strong>{formatEther(p.state.buckets.ars.tokenBalance)}</strong>
         </div>
         <div>
           <span>Allowlisted</span>
@@ -356,8 +446,21 @@ function UserPanel() {
 
       <p className="hint">
         USD comes from Admin: switch to <strong>#0 Admin</strong>, mint USD to{' '}
-        <code>{short(address)}</code>, then switch back here to mint/redeem MXP.
+        <code>{short(address)}</code>, then switch back here to mint/redeem {symbol}.
       </p>
+
+      {!p.state.allowlisted && (
+        <p className="hint warn-text">This account is not allowlisted — mint/redeem will revert.</p>
+      )}
+      {!p.state.windowOpen && (
+        <p className="hint warn-text">MRW is closed — Admin must open a window.</p>
+      )}
+      {p.state.windowOpen && !p.activeRateValid && (
+        <p className="hint warn-text">
+          No {symbol} rate posted for the current window. Switch to <strong>#1 Oracle</strong> and
+          post a {symbol} rate, or run the feeder.
+        </p>
+      )}
 
       <form
         className="form-row"
@@ -366,10 +469,10 @@ function UserPanel() {
           void p.approveUsdMax().then(() => p.mint(mintAmt))
         }}
       >
-        <Field label="Mint MXP (USD in)">
+        <Field label={`Mint ${symbol} (USD in)`}>
           <input value={mintAmt} onChange={(e) => setMintAmt(e.target.value)} />
         </Field>
-        <button type="submit" disabled={p.busy || !p.state.allowlisted || !p.state.windowOpen}>
+        <button type="submit" disabled={p.busy || !canTrade}>
           Approve + mint
         </button>
       </form>
@@ -378,16 +481,53 @@ function UserPanel() {
         className="form-row"
         onSubmit={(e) => {
           e.preventDefault()
-          void p.approveMxpMax().then(() => p.redeem(redeemAmt))
+          void p.approveTokenMax().then(() => p.redeem(redeemAmt))
         }}
       >
-        <Field label="Redeem MXP">
+        <Field label={`Redeem ${symbol}`}>
           <input value={redeemAmt} onChange={(e) => setRedeemAmt(e.target.value)} />
         </Field>
-        <button type="submit" disabled={p.busy || !p.state.allowlisted || !p.state.windowOpen}>
+        <button type="submit" disabled={p.busy || !canTrade}>
           Approve + redeem
         </button>
       </form>
+
+      <div className="transfer-box">
+        <h3>Transfer</h3>
+        <p className="hint">Send USD, CLP, or ARS to any address. Allowlist is not required.</p>
+        <form
+          className="form-row"
+          onSubmit={(e) => {
+            e.preventDefault()
+            if (!isAddress(transferTo)) return
+            void p.transfer(transferToken, transferTo as Address, transferAmt)
+          }}
+        >
+          <Field label="Token">
+            <select
+              value={transferToken}
+              onChange={(e) => setTransferToken(e.target.value as TransferToken)}
+            >
+              <option value="usd">USD</option>
+              <option value="clp">CLP</option>
+              <option value="ars">ARS</option>
+            </select>
+          </Field>
+          <Field label="To">
+            <input value={transferTo} onChange={(e) => setTransferTo(e.target.value)} />
+          </Field>
+          <Field label="Amount">
+            <input value={transferAmt} onChange={(e) => setTransferAmt(e.target.value)} />
+          </Field>
+          <button type="submit" disabled={p.busy || !isAddress(transferTo)}>
+            Transfer
+          </button>
+        </form>
+        <div className="allowlist-box">
+          <h3>Pick from allowlist</h3>
+          <AllowlistList onPick={(addr) => setTransferTo(addr)} />
+        </div>
+      </div>
     </Panel>
   )
 }
@@ -401,11 +541,11 @@ export default function App() {
     <div className="app">
       <header className="hero">
         <div>
-          <p className="eyebrow">Permissioned FX stablecoin</p>
-          <h1>NicoFX</h1>
+          <p className="eyebrow">Permissioned FX settlement network</p>
+          <h1>FX Net</h1>
           <p className="lede">
-            Local Anvil console for USD collateral, MXP mint/redeem windows, and the trusted
-            oracle.
+            Local Anvil console for multicurrency USD-collateralized settlement (CLP + ARS), shared
+            mint/redeem windows, and a trusted oracle.
           </p>
         </div>
         <div className="account-card">
@@ -425,6 +565,9 @@ export default function App() {
           <p>
             <span>{accountMeta.label}</span>
             <code>{short(address)}</code>
+            <button type="button" className="ghost-sm" onClick={() => void copyText(address)}>
+              Copy
+            </button>
           </p>
         </div>
       </header>
@@ -439,11 +582,16 @@ export default function App() {
         </div>
       ) : (
         <>
+          <div className="bucket-row">
+            <span className="bucket-label">Active bucket</span>
+            <BucketSwitcher />
+          </div>
           <StatusBar />
           <p className="contracts">
-            Engine <code>{short(deployments.engine)}</code> · USD{' '}
-            <code>{short(deployments.usd)}</code> · MXP <code>{short(deployments.mxp)}</code> ·
-            Oracle <code>{short(deployments.oracle)}</code>
+            Hub <code>{short(deployments.hub)}</code> · USD <code>{short(deployments.usd)}</code> ·
+            CLP <code>{short(deployments.buckets.clp.token)}</code> · ARS{' '}
+            <code>{short(deployments.buckets.ars.token)}</code> · Oracle{' '}
+            <code>{short(deployments.oracle)}</code>
           </p>
 
           <nav className="tabs">
