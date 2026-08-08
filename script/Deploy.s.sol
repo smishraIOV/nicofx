@@ -10,8 +10,9 @@ import {SettlementToken} from "../src/SettlementToken.sol";
 import {Oracle} from "../src/Oracle.sol";
 import {ProtocolHub} from "../src/ProtocolHub.sol";
 import {CurrencyBucket} from "../src/CurrencyBucket.sol";
+import {NettingSession} from "../src/NettingSession.sol";
 
-/// @notice Deploys USD, ProtocolHub, shared Oracle, and CLP+ARS CurrencyBuckets for local Anvil.
+/// @notice Deploys USD, ProtocolHub, Oracle, CLP+ARS buckets, and NettingSession for local Anvil.
 contract Deploy is Script {
     // Anvil account 1 / 2 / 3 / 4
     address constant ORACLE_OP = 0x70997970C51812dc3A010C7d01b50e0d17dc79C8;
@@ -77,6 +78,18 @@ contract Deploy is Script {
         clp.grantRole(clp.ENGINE_ROLE(), address(clpBucket));
         ars.grantRole(ars.ENGINE_ROLE(), address(arsBucket));
 
+        NettingSession settlement = NettingSession(
+            address(
+                new ERC1967Proxy(
+                    address(new NettingSession()),
+                    abi.encodeCall(
+                        NettingSession.initialize,
+                        (admin, address(hub), address(usd), address(clp), address(ars))
+                    )
+                )
+            )
+        );
+
         hub.setAllowlist(USER1, true);
         hub.setAllowlist(USER2, true);
         hub.setAllowlist(USER3, true);
@@ -95,6 +108,9 @@ contract Deploy is Script {
             "\",",
             "\"oracle\":\"",
             vm.toString(address(oracle)),
+            "\",",
+            "\"settlement\":\"",
+            vm.toString(address(settlement)),
             "\",",
             "\"admin\":\"",
             vm.toString(admin),
@@ -133,6 +149,7 @@ contract Deploy is Script {
         console2.log("CLP Bucket", address(clpBucket));
         console2.log("ARS", address(ars));
         console2.log("ARS Bucket", address(arsBucket));
+        console2.log("NettingSession", address(settlement));
         console2.log("Admin", admin);
         console2.log("OracleOperator", ORACLE_OP);
         console2.log("Wrote app/src/contracts/deployments.json");

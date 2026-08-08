@@ -18,14 +18,18 @@ import {
 import {
   BUCKET_IDS,
   CURRENCY,
+  SETTLEMENT_CURRENCIES,
   bucketAbi,
   deployments,
+  hasSettlement,
   hubAbi,
   isDeployed,
   oracleAbi,
+  settlementAbi,
   tokenAbi,
   usdAbi,
   type BucketId,
+  type SettlementCurrency,
 } from './contracts'
 import { useWallet } from './wallet'
 
@@ -41,6 +45,35 @@ export type BucketState = {
   tokenAllowance: bigint
   ratePerUsd: bigint
   rateWindowNonce: bigint
+}
+
+export type ObligationRow = {
+  debtor: Address
+  creditor: Address
+  currency: number
+  amount: bigint
+}
+
+export type PartyNetRow = {
+  party: Address
+  nets: Record<SettlementCurrency, bigint> // signed as bigint (negative = debtor)
+  funded: Record<SettlementCurrency, boolean>
+  claimed: Record<SettlementCurrency, boolean>
+}
+
+export type SettlementState = {
+  phase: number
+  sessionId: bigint
+  obligations: ObligationRow[]
+  participants: Address[]
+  partyNets: PartyNetRow[]
+  escrow: Record<SettlementCurrency, bigint>
+  totalCreditor: Record<SettlementCurrency, bigint>
+  totalDebtor: Record<SettlementCurrency, bigint>
+  fullyFunded: Record<SettlementCurrency, boolean>
+  usdAllowanceSettlement: bigint
+  clpAllowanceSettlement: bigint
+  arsAllowanceSettlement: bigint
 }
 
 export type ProtocolState = {
@@ -60,6 +93,7 @@ export type ProtocolState = {
   usdAllowanceArs: bigint
   blockNumber: bigint
   buckets: Record<BucketId, BucketState>
+  settlement: SettlementState
 }
 
 export type TxStatus = 'pending' | 'ok' | 'fail'
@@ -89,6 +123,27 @@ const emptyBucket: BucketState = {
   rateWindowNonce: 0n,
 }
 
+const emptyCurrencyRecord = <T,>(v: T): Record<SettlementCurrency, T> => ({
+  clp: v,
+  ars: v,
+  usd: v,
+})
+
+const emptySettlement: SettlementState = {
+  phase: 0,
+  sessionId: 0n,
+  obligations: [],
+  participants: [],
+  partyNets: [],
+  escrow: emptyCurrencyRecord(0n),
+  totalCreditor: emptyCurrencyRecord(0n),
+  totalDebtor: emptyCurrencyRecord(0n),
+  fullyFunded: emptyCurrencyRecord(false),
+  usdAllowanceSettlement: 0n,
+  clpAllowanceSettlement: 0n,
+  arsAllowanceSettlement: 0n,
+}
+
 const empty: ProtocolState = {
   windowOpen: false,
   paused: false,
@@ -106,6 +161,7 @@ const empty: ProtocolState = {
   usdAllowanceArs: 0n,
   blockNumber: 0n,
   buckets: { clp: emptyBucket, ars: emptyBucket },
+  settlement: emptySettlement,
 }
 
 function formatTxError(e: unknown): string {
@@ -195,6 +251,153 @@ async function readBucket(
   }
 }
 
+async function readSettlement(
+  publicClient: ReturnType<typeof useWallet>['publicClient'],
+  address: Address,
+): Promise<SettlementState> {
+  if (!hasSettlement()) return emptySettlement
+
+  const settlement = deployments.settlement
+  const [phase, sessionId, obligationsRaw, participantsRaw] = await Promise.all([
+    publicClient.readContract({ address: settlement, abi: settlementAbi, functionName: 'phase' }),
+    publicClient.readContract({ address: settlement, abi: settlementAbi, functionName: 'sessionId' }),
+    publicClient.readContract({
+      address: settlement,
+      abi: settlementAbi,
+      functionName: 'getObligations',
+    }),
+    publicClient.readContract({
+      address: settlement,
+      abi: settlementAbi,
+      functionName: 'participants',
+    }),
+  ])
+
+  const participants = participantsRaw as Address[]
+  const obligations = (obligationsRaw as { debtor: Address; creditor: Address; currency: number; amount: bigint }[]).map(
+    (o) => ({
+      debtor: o.debtor,
+      creditor: o.creditor,
+      currency: Number(o.currency),
+      amount: o.amount as bigint,
+    }),
+  )
+
+  const escrow = emptyCurrencyRecord(0n)
+  const totalCreditor = emptyCurrencyRecord(0n)
+  const totalDebtor = emptyCurrencyRecord(0n)
+  const fullyFunded = emptyCurrencyRecord(false)
+
+  await Promise.all(
+    SETTLEMENT_CURRENCIES.map(async (id) => {
+      const c = CURRENCY[id]
+      const [esc, cred, debt, funded] = await Promise.all([
+        publicClient.readContract({
+          address: settlement,
+          abi: settlementAbi,
+          functionName: 'escrowBalance',
+          args: [c],
+        }),
+        publicClient.readContract({
+          address: settlement,
+          abi: settlementAbi,
+          functionName: 'totalCreditorNets',
+          args: [c],
+        }),
+        publicClient.readContract({
+          address: settlement,
+          abi: settlementAbi,
+          functionName: 'totalDebtorNets',
+          args: [c],
+        }),
+        publicClient.readContract({
+          address: settlement,
+          abi: settlementAbi,
+          functionName: 'currencyFullyFunded',
+          args: [c],
+        }),
+      ])
+      escrow[id] = esc as bigint
+      totalCreditor[id] = cred as bigint
+      totalDebtor[id] = debt as bigint
+      fullyFunded[id] = funded as boolean
+    }),
+  )
+
+  const partyNets: PartyNetRow[] = await Promise.all(
+    participants.map(async (party) => {
+      const nets = emptyCurrencyRecord(0n)
+      const funded = emptyCurrencyRecord(false)
+      const claimed = emptyCurrencyRecord(false)
+      await Promise.all(
+        SETTLEMENT_CURRENCIES.map(async (id) => {
+          const c = CURRENCY[id]
+          const [n, f, cl] = await Promise.all([
+            publicClient.readContract({
+              address: settlement,
+              abi: settlementAbi,
+              functionName: 'netOf',
+              args: [party, c],
+            }),
+            publicClient.readContract({
+              address: settlement,
+              abi: settlementAbi,
+              functionName: 'fundedOf',
+              args: [party, c],
+            }),
+            publicClient.readContract({
+              address: settlement,
+              abi: settlementAbi,
+              functionName: 'claimedOf',
+              args: [party, c],
+            }),
+          ])
+          nets[id] = n as bigint
+          funded[id] = f as boolean
+          claimed[id] = cl as boolean
+        }),
+      )
+      return { party, nets, funded, claimed }
+    }),
+  )
+
+  const [usdAllowanceSettlement, clpAllowanceSettlement, arsAllowanceSettlement] = await Promise.all([
+    publicClient.readContract({
+      address: deployments.usd,
+      abi: usdAbi,
+      functionName: 'allowance',
+      args: [address, settlement],
+    }),
+    publicClient.readContract({
+      address: deployments.buckets.clp.token,
+      abi: tokenAbi,
+      functionName: 'allowance',
+      args: [address, settlement],
+    }),
+    publicClient.readContract({
+      address: deployments.buckets.ars.token,
+      abi: tokenAbi,
+      functionName: 'allowance',
+      args: [address, settlement],
+    }),
+  ])
+
+  return {
+    phase: Number(phase),
+    sessionId: sessionId as bigint,
+    obligations,
+    participants,
+    partyNets,
+    escrow,
+    totalCreditor,
+    totalDebtor,
+    fullyFunded,
+    usdAllowanceSettlement: usdAllowanceSettlement as bigint,
+    clpAllowanceSettlement: clpAllowanceSettlement as bigint,
+    arsAllowanceSettlement: arsAllowanceSettlement as bigint,
+  }
+}
+
 export function useProtocolController() {
   const { address, publicClient, walletClient } = useWallet()
   const [state, setState] = useState<ProtocolState>(empty)
@@ -245,6 +448,7 @@ export function useProtocolController() {
         blockNumber,
         clpBucket,
         arsBucket,
+        settlement,
       ] = await Promise.all([
         publicClient.readContract({ address: hub, abi: hubAbi, functionName: 'windowOpen' }),
         publicClient.readContract({ address: hub, abi: hubAbi, functionName: 'paused' }),
@@ -307,6 +511,7 @@ export function useProtocolController() {
         publicClient.getBlockNumber(),
         readBucket(publicClient, 'clp', address),
         readBucket(publicClient, 'ars', address),
+        readSettlement(publicClient, address),
       ])
 
       setState({
@@ -326,6 +531,7 @@ export function useProtocolController() {
         usdAllowanceArs: usdAllowanceArs as bigint,
         blockNumber: blockNumber as bigint,
         buckets: { clp: clpBucket, ars: arsBucket },
+        settlement,
       })
       setReadError(null)
     } catch (e) {
@@ -437,6 +643,32 @@ export function useProtocolController() {
     [run, walletClient],
   )
 
+  const writeSettlement = useCallback(
+    (functionName: string, args: readonly unknown[] = []) =>
+      run(`settlement.${functionName}`, async () =>
+        walletClient.writeContract({
+          address: deployments.settlement,
+          abi: settlementAbi,
+          functionName,
+          args,
+          chain: walletClient.chain,
+          account: walletClient.account!,
+        }),
+      ),
+    [run, walletClient],
+  )
+
+  const approveSettlementToken = useCallback(
+    (currency: SettlementCurrency) => {
+      const max = parseEther('1000000000')
+      if (currency === 'usd') {
+        return writeUsd('approve', [deployments.settlement, max])
+      }
+      return writeToken(currency, 'approve', [deployments.settlement, max])
+    },
+    [writeUsd, writeToken],
+  )
+
   const active = state.buckets[activeBucket]
 
   /// Mint/redeem require a non-zero rate stamped with the current hub window nonce.
@@ -450,6 +682,7 @@ export function useProtocolController() {
 
   return {
     deployed,
+    hasSettlement: hasSettlement(),
     state,
     activeBucket,
     setActiveBucket,
@@ -497,6 +730,25 @@ export function useProtocolController() {
       if (token === 'usd') return writeUsd('transfer', [to, value])
       return writeToken(token, 'transfer', [to, value])
     },
+    openSettlementSession: () => writeSettlement('openSession'),
+    lockSettlementSession: () => writeSettlement('lockSession'),
+    cancelSettlementSession: () => writeSettlement('cancelSession'),
+    postObligation: (
+      debtor: Address,
+      creditor: Address,
+      currency: SettlementCurrency,
+      amount: string,
+    ) =>
+      writeSettlement('postObligation', [
+        debtor,
+        creditor,
+        CURRENCY[currency],
+        parseEther(amount),
+      ]),
+    fundSettlement: (currency: SettlementCurrency) =>
+      approveSettlementToken(currency).then(() => writeSettlement('fund', [CURRENCY[currency]])),
+    claimSettlement: (currency: SettlementCurrency) =>
+      writeSettlement('claim', [CURRENCY[currency]]),
   }
 }
 

@@ -401,6 +401,46 @@ button:disabled {
   flex-wrap: wrap;
 }
 
+.obligation-list li {
+  grid-template-columns: 2.5rem 1fr;
+}
+
+.net-table-wrap {
+  overflow-x: auto;
+  margin-bottom: 0.5rem;
+}
+
+.net-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.82rem;
+  font-family: 'IBM Plex Mono', ui-monospace, monospace;
+}
+
+.net-table th,
+.net-table td {
+  border: 1px solid var(--line);
+  padding: 0.4rem 0.55rem;
+  text-align: right;
+}
+
+.net-table th:first-child,
+.net-table td:first-child {
+  text-align: left;
+}
+
+.net-table tr.me {
+  background: rgba(182, 245, 106, 0.08);
+}
+
+.net-table .debt {
+  color: var(--danger);
+}
+
+.net-table .credit {
+  color: var(--ok);
+}
+
 .allowlist .yes {
   color: var(--ok);
 }

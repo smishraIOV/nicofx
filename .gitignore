@@ -16,7 +16,7 @@ docs/
 .env
 .env.*
 
-# Local scratch
+# Local scratch / planning drafts
 qs.md
 present.md
 ideation.md
@@ -24,3 +24,15 @@ ideation.md
 # App
 app/node_modules/
 app/dist/
+
+# Coverage / gas
+lcov.info
+coverage/
+.gas-snapshot
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*~

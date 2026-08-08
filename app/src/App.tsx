@@ -1,6 +1,6 @@
 import { useState, type FormEvent, type ReactNode } from 'react'
 import { type Address, formatEther, isAddress } from 'viem'
-import { bucketLabel, deployments } from './contracts'
+import { bucketLabel, deployments, PHASE_LABELS, type SettlementCurrency } from './contracts'
 import { useProtocol, type TransferToken } from './useProtocol'
 import { ANVIL_ACCOUNTS } from './wagmi'
 import { useWallet } from './wallet'
@@ -412,7 +412,6 @@ function OraclePanel() {
 
 function UserPanel() {
   const p = useProtocol()
-  const { address } = useWallet()
   const [mintAmt, setMintAmt] = useState('100')
   const [redeemAmt, setRedeemAmt] = useState('100')
   const [transferToken, setTransferToken] = useState<TransferToken>('usd')
@@ -445,8 +444,8 @@ function UserPanel() {
       </div>
 
       <p className="hint">
-        USD comes from Admin: switch to <strong>#0 Admin</strong>, mint USD to{' '}
-        <code>{short(address)}</code>, then switch back here to mint/redeem {symbol}.
+        USD / CLP / ARS balances are <strong>settlement inventory</strong>. Mint/redeem funds
+        inventory; multilateral netting lives on the <strong>Settle</strong> tab.
       </p>
 
       {!p.state.allowlisted && (
@@ -532,10 +531,262 @@ function UserPanel() {
   )
 }
 
+function currencyName(id: number): string {
+  if (id === 0) return 'CLP'
+  if (id === 1) return 'ARS'
+  if (id === 2) return 'USD'
+  return `cur${id}`
+}
+
+function formatSigned(n: bigint): string {
+  const abs = n < 0n ? -n : n
+  const s = formatEther(abs)
+  if (n < 0n) return `−${s}`
+  if (n > 0n) return `+${s}`
+  return '0'
+}
+
+function SettlePanel() {
+  const p = useProtocol()
+  const { address } = useWallet()
+  const s = p.state.settlement
+  const phaseLabel = PHASE_LABELS[s.phase] ?? String(s.phase)
+
+  const [debtor, setDebtor] = useState<string>(address)
+  const [creditor, setCreditor] = useState<string>(ANVIL_ACCOUNTS[3]?.address ?? '')
+  const [currency, setCurrency] = useState<SettlementCurrency>('clp')
+  const [amount, setAmount] = useState('10')
+  const [picking, setPicking] = useState<'debtor' | 'creditor' | null>(null)
+
+  const myNets = s.partyNets.find((row) => row.party.toLowerCase() === address.toLowerCase())
+
+  if (!p.hasSettlement) {
+    return (
+      <Panel title="Settle">
+        <p className="hint warn-text">
+          NettingSession not in deployments — redeploy with the latest script.
+        </p>
+      </Panel>
+    )
+  }
+
+  return (
+    <Panel title="Settle">
+      <p className="hint">
+        Multilateral obligation book. Post debts → admin locks (nets) → debtors fund escrow →
+        creditors claim. Mint/redeem is inventory only (not part of this session).
+      </p>
+
+      <div className="balances">
+        <div>
+          <span>Session</span>
+          <strong>#{s.sessionId.toString()}</strong>
+        </div>
+        <div>
+          <span>Phase</span>
+          <strong>{phaseLabel}</strong>
+        </div>
+        <div>
+          <span>Obligations</span>
+          <strong>{s.obligations.length}</strong>
+        </div>
+        <div>
+          <span>Parties</span>
+          <strong>{s.participants.length}</strong>
+        </div>
+      </div>
+
+      <div className="actions">
+        <button
+          type="button"
+          disabled={p.busy || p.state.paused}
+          onClick={() => void p.openSettlementSession()}
+        >
+          Open session
+        </button>
+        <button
+          type="button"
+          disabled={p.busy || p.state.paused || s.phase !== 1}
+          onClick={() => void p.lockSettlementSession()}
+        >
+          Lock &amp; net
+        </button>
+        <button
+          type="button"
+          disabled={p.busy || (s.phase !== 1 && s.phase !== 2)}
+          onClick={() => void p.cancelSettlementSession()}
+        >
+          Cancel
+        </button>
+      </div>
+
+      {s.phase === 1 && (
+        <>
+          <form
+            className="form-row"
+            onSubmit={(e) => {
+              e.preventDefault()
+              if (!isAddress(debtor) || !isAddress(creditor)) return
+              void p.postObligation(debtor as Address, creditor as Address, currency, amount)
+            }}
+          >
+            <Field label="Debtor">
+              <input value={debtor} onChange={(e) => setDebtor(e.target.value)} />
+            </Field>
+            <Field label="Creditor">
+              <input value={creditor} onChange={(e) => setCreditor(e.target.value)} />
+            </Field>
+            <Field label="Currency">
+              <select
+                value={currency}
+                onChange={(e) => setCurrency(e.target.value as SettlementCurrency)}
+              >
+                <option value="clp">CLP</option>
+                <option value="ars">ARS</option>
+                <option value="usd">USD</option>
+              </select>
+            </Field>
+            <Field label="Amount">
+              <input value={amount} onChange={(e) => setAmount(e.target.value)} />
+            </Field>
+            <button
+              type="submit"
+              disabled={p.busy || p.state.paused || !isAddress(debtor) || !isAddress(creditor)}
+            >
+              Post obligation
+            </button>
+          </form>
+          <div className="allowlist-box">
+            <h3>
+              Pick from allowlist{' '}
+              <button type="button" className="ghost-sm" onClick={() => setPicking('debtor')}>
+                → debtor
+              </button>{' '}
+              <button type="button" className="ghost-sm" onClick={() => setPicking('creditor')}>
+                → creditor
+              </button>
+              {picking && <span className="hint"> (click Use for {picking})</span>}
+            </h3>
+            <AllowlistList
+              onPick={(addr) => {
+                if (picking === 'creditor') setCreditor(addr)
+                else setDebtor(addr)
+                setPicking(null)
+              }}
+            />
+          </div>
+        </>
+      )}
+
+      <div className="allowlist-box">
+        <h3>Obligation book</h3>
+        {s.obligations.length === 0 ? (
+          <p className="hint">No obligations in this session.</p>
+        ) : (
+          <ul className="allowlist obligation-list">
+            {s.obligations.map((o, i) => (
+              <li key={`${o.debtor}-${o.creditor}-${i}`}>
+                <span>#{i}</span>
+                <code>
+                  {short(o.debtor)} → {short(o.creditor)} · {formatEther(o.amount)}{' '}
+                  {currencyName(o.currency)}
+                </code>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+
+      {(s.phase === 2 || s.phase === 3) && (
+        <>
+          <div className="allowlist-box">
+            <h3>Net matrix (after lock)</h3>
+            <div className="net-table-wrap">
+              <table className="net-table">
+                <thead>
+                  <tr>
+                    <th>Party</th>
+                    <th>CLP</th>
+                    <th>ARS</th>
+                    <th>USD</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {s.partyNets.map((row) => (
+                    <tr
+                      key={row.party}
+                      className={
+                        row.party.toLowerCase() === address.toLowerCase() ? 'me' : undefined
+                      }
+                    >
+                      <td>
+                        <code title={row.party}>{short(row.party)}</code>
+                      </td>
+                      {(['clp', 'ars', 'usd'] as SettlementCurrency[]).map((c) => (
+                        <td key={c} className={row.nets[c] < 0n ? 'debt' : row.nets[c] > 0n ? 'credit' : ''}>
+                          {formatSigned(row.nets[c])}
+                          {row.funded[c] ? ' ✓f' : ''}
+                          {row.claimed[c] ? ' ✓c' : ''}
+                        </td>
+                      ))}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <p className="hint">
+              Escrow — CLP {formatEther(s.escrow.clp)} / need {formatEther(s.totalDebtor.clp)}
+              {s.fullyFunded.clp ? ' (funded)' : ''} · ARS {formatEther(s.escrow.ars)} / need{' '}
+              {formatEther(s.totalDebtor.ars)}
+              {s.fullyFunded.ars ? ' (funded)' : ''} · USD {formatEther(s.escrow.usd)} / need{' '}
+              {formatEther(s.totalDebtor.usd)}
+              {s.fullyFunded.usd ? ' (funded)' : ''}
+            </p>
+          </div>
+
+          {s.phase === 2 && myNets && (
+            <div className="actions">
+              {(['clp', 'ars', 'usd'] as SettlementCurrency[]).map((c) => {
+                const net = myNets.nets[c]
+                if (net < 0n && !myNets.funded[c]) {
+                  return (
+                    <button
+                      key={`fund-${c}`}
+                      type="button"
+                      disabled={p.busy || p.state.paused}
+                      onClick={() => void p.fundSettlement(c)}
+                    >
+                      Fund {formatEther(-net)} {bucketLabel(c)}
+                    </button>
+                  )
+                }
+                if (net > 0n && !myNets.claimed[c]) {
+                  return (
+                    <button
+                      key={`claim-${c}`}
+                      type="button"
+                      disabled={p.busy || p.state.paused || !s.fullyFunded[c]}
+                      onClick={() => void p.claimSettlement(c)}
+                    >
+                      Claim {formatEther(net)} {bucketLabel(c)}
+                      {!s.fullyFunded[c] ? ' (wait)' : ''}
+                    </button>
+                  )
+                }
+                return null
+              })}
+            </div>
+          )}
+        </>
+      )}
+    </Panel>
+  )
+}
+
 export default function App() {
   const { accountIndex, accountMeta, address, setAccountIndex } = useWallet()
   const p = useProtocol()
-  const [tab, setTab] = useState<'admin' | 'oracle' | 'user'>('admin')
+  const [tab, setTab] = useState<'settle' | 'admin' | 'oracle' | 'user'>('settle')
 
   return (
     <div className="app">
@@ -544,8 +795,8 @@ export default function App() {
           <p className="eyebrow">Permissioned FX settlement network</p>
           <h1>FX Net</h1>
           <p className="lede">
-            Local Anvil console for multicurrency USD-collateralized settlement (CLP + ARS), shared
-            mint/redeem windows, and a trusted oracle.
+            Local Anvil console for multilateral obligation netting (CLP / ARS / USD inventory),
+            shared mint/redeem windows, and a trusted oracle.
           </p>
         </div>
         <div className="account-card">
@@ -588,14 +839,15 @@ export default function App() {
           </div>
           <StatusBar />
           <p className="contracts">
-            Hub <code>{short(deployments.hub)}</code> · USD <code>{short(deployments.usd)}</code> ·
-            CLP <code>{short(deployments.buckets.clp.token)}</code> · ARS{' '}
+            Hub <code>{short(deployments.hub)}</code> · Settle{' '}
+            <code>{short(deployments.settlement)}</code> · USD <code>{short(deployments.usd)}</code>{' '}
+            · CLP <code>{short(deployments.buckets.clp.token)}</code> · ARS{' '}
             <code>{short(deployments.buckets.ars.token)}</code> · Oracle{' '}
             <code>{short(deployments.oracle)}</code>
           </p>
 
           <nav className="tabs">
-            {(['admin', 'oracle', 'user'] as const).map((t) => (
+            {(['settle', 'admin', 'oracle', 'user'] as const).map((t) => (
               <button
                 key={t}
                 type="button"
@@ -613,6 +865,7 @@ export default function App() {
           <TxStrip />
           {p.readError && <div className="error">Read error: {p.readError}</div>}
 
+          {tab === 'settle' && <SettlePanel />}
           {tab === 'admin' && <AdminPanel />}
           {tab === 'oracle' && <OraclePanel />}
           {tab === 'user' && <UserPanel />}

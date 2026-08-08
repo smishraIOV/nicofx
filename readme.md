@@ -2,20 +2,21 @@
 
 Permissioned, crypto-collateralized FX settlement network. Settlement tokens (**CLP**, **ARS**) are each backed by an **isolated USD vault**, sharing one allowlist and one mint/redeem window calendar.
 
-Tokens are not for retail use — only allowlisted enterprise addresses may mint or redeem. ERC20 transfers of USD / CLP / ARS are unrestricted.
+Tokens are not meant for retail use — only allowlisted enterprise addresses may mint or redeem. Transfers, however, of USD / CLP / ARS are unrestricted.
 
-> **Assumption:** The **USD** token is always at par with the US dollar (1 USD token = 1 USD). The protocol does not price USD against fiat, haircut it, or model depeg risk.
+> **Assumption:** For simplicity, the **USD** token is always treated at par with the US dollar (1 USD token = 1 USD). The protocol does not price USD against fiat, haircut it, or model depeg risk. This will not be acceptable in a production setting.
 >
 > **FX risk** is per bucket: an adverse CLP or ARS move can exhaust that bucket’s 10% buffer. v1 handles shortfall with a redemption race (proportional burn). See [devaluation-risk.md](./devaluation-risk.md).
 
 ## Goals
 
-- Mint **CLP** and **ARS** as ERC20 settlement assets, each backed by its own **USD** collateral vault
+- Multilateral **obligation book** and session netting (this is the primary product)
+- Mint **CLP** and **ARS** as ERC20 settlement inventory, each backed by an isolated **USD** vault
 - Shared admin-controlled mint/redeem window (MRW) and allowlist via `ProtocolHub`
 - Shared trusted oracle posting per-currency rates (`clpPerUsd`, `arsPerUsd`)
-- 110% collateralization per bucket (10% admin buffer)
-- Redeem-only protocol fee (bps), tracked as `accruedFees` per bucket
-- dApp (FX Net) for admin, oracle, and users — including token transfers and copyable allowlist addresses
+- 110% collateralization per bucket (10% admin buffer. provided by protocol operator for each bucket)
+- Protocol fee (bps), only for redeeming USD, tracked as `accruedFees` per bucket
+- dApp (FX Net): Settle / Admin / Oracle / User
 - Local stack: Foundry (`forge`, `cast`, `anvil`)
 
 ## Architecture
@@ -27,17 +28,63 @@ Tokens are not for retail use — only allowlisted enterprise addresses may mint
 | `Oracle` | Trusted multi-rate publisher (`setRate(currency, rate)`) |
 | `SettlementToken` | Upgradeable ERC20 (CLP / ARS instances); mint/burn only via its bucket |
 | `CurrencyBucket` | Isolated USD vault, mint/redeem, fee, reserves for one currency |
+| `NettingSession` | Multilateral obligation book; lock → net → holds token escrow for fund/claim |
 
-Upgradeability: UUPS for `USD`, `ProtocolHub`, `SettlementToken`, `CurrencyBucket`. Oracle is non-upgradeable.
+Upgradeability: UUPS for `USD`, `ProtocolHub`, `SettlementToken`, `CurrencyBucket`, `NettingSession`. Oracle is non-upgradeable.
 
 ```text
-ProtocolHub ──allowlist + MRW + pause──► both buckets + oracle
-USD ──collateral──► CurrencyBucket(CLP) ──► SettlementToken CLP
-USD ──collateral──► CurrencyBucket(ARS) ──► SettlementToken ARS
-Oracle ──clpPerUsd / arsPerUsd──► both buckets
+ProtocolHub ──allowlist + pause──► buckets + oracle + NettingSession
+USD / CLP / ARS ──inventory transfers──► NettingSession escrow
+USD ──collateral──► CurrencyBucket(CLP|ARS) ──► SettlementToken
+Oracle ──clpPerUsd / arsPerUsd──► buckets
 ```
 
-**Isolation:** ARS redemptions cannot spend CLP vault USD (and vice versa).
+**Isolation:** ARS redemptions cannot spend CLP vault USD (and vice versa). Netting is separate from mint/redeem.
+
+### Multilateral settlement (obligation book)
+
+Primary product flow (independent of MRW):
+
+```text
+Idle → Open (post obligations)
+     → Locked (nets computed; posting frozen)
+     → Funding (debtors transfer |net| into escrow)
+     → Settled (creditors claim) | Cancelled
+```
+
+- `postObligation(debtor, creditor, currency, amount)` — currency is CLP / ARS / USD; poster is debtor or session admin; both parties allowlisted
+- On `lockSession`, nets are `Σ owed_to − Σ owes` per party per currency (not the raw IOUs)
+- Debtors `fund(currency)`; creditors `claim(currency)` once that currency’s escrow is fully funded
+- Perfect multilateral cycles can net to zero and settle immediately on lock
+
+**Fund / claim / escrow:** After lock, each party has a signed **net** per currency. Negative net → that party `fund`s `|net|` of the token into `NettingSession` (the escrow is this contract’s balance — there is no separate escrow contract). Positive net → they `claim` once that currency is fully funded. Funding is per-currency: CLP claims wait only on CLP debtors (same for ARS / USD).
+
+#### Example graph (Anvil #2 / #3 / #4)
+
+Ensure **#2** holds at least **90 CLP** of inventory (mint via User tab or transfer). Then on **Settle**:
+
+1. **Admin (#0)** — Open session  
+2. Post these obligations (poster = debtor or Admin):
+
+| Debtor | Creditor | Currency | Amount |
+|--------|----------|----------|--------|
+| #2 User1 | #3 User2 | CLP | 100 |
+| #3 User2 | #4 User3 | CLP | 40 |
+| #4 User3 | #2 User1 | CLP | 10 |
+
+3. **Lock & net** — matrix should show:
+
+```text
+#2: −90 CLP  (fund)
+#3: +60 CLP  (claim)
+#4: +30 CLP  (claim)
+```
+
+4. Switch to **#2** → Fund 90 CLP → **#3** Claim 60 → **#4** Claim 30 → **Settled**
+
+Gross claims were 150 CLP; only **90 CLP** moves through escrow. A perfect cycle (50+50+50 the other way) nets to zero on lock with no fund/claim.
+
+**Follow-up (not in this version):** auto mint/redeem inside a session to cover residuals; counterparty acceptance; coupling settlement calendar to MRW.
 
 ### Pause
 
@@ -48,6 +95,7 @@ Oracle ──clpPerUsd / arsPerUsd──► both buckets
 | `mint` / `redeem` (any bucket) | No |
 | Oracle `setRate` | No |
 | `withdrawReserve` (any bucket) | No |
+| NettingSession post / fund / claim | No |
 | `depositReserve` / `withdrawFees` | Yes |
 | `openWindow` / `closeWindow`, allowlist, `setFeeBps` | Yes |
 | ERC20 transfers | Yes |
@@ -60,7 +108,7 @@ Oracle ──clpPerUsd / arsPerUsd──► both buckets
 | **Hub_Admin** | Open/close MRW; pause/unpause; manage shared allowlist |
 | **Bucket_Admin** | Per-bucket deposit/withdraw reserve; set fee; withdraw fees; upgrade that bucket/token |
 | **Trusted_Oracle** | Post CLP and ARS rates (MRW open, hub not paused) |
-| **Users** | Allowlisted: mint/redeem in open MRW; anyone: transfer tokens |
+| **Users** | Allowlisted: mint/redeem in open MRW; post/fund/claim settlement; anyone: transfer tokens |
 
 Anvil mapping: account 0 = admins, account 1 = oracle, accounts 2–4 = allowlisted users.
 
@@ -133,18 +181,19 @@ Vite + React + wagmi/viem against Anvil:
 
 | View | Actions |
 |------|---------|
+| **Settle** | Open/lock/cancel session; post obligations; view nets; fund/claim residuals |
 | **Admin** | Shared MRW/pause/allowlist; mint USD; per-bucket reserve & fee (bucket switcher) |
 | **Oracle** | Post CLP and ARS rates |
-| **User** | Mint/redeem active bucket; transfer USD/CLP/ARS; pick/copy allowlisted recipients |
+| **User** | Mint/redeem inventory; transfer USD/CLP/ARS; pick/copy allowlisted recipients |
 
 ## Repo layout
 
 ```
 nicofx/
   foundry.toml
-  src/           USD, ProtocolHub, Oracle, SettlementToken, CurrencyBucket, Currency
+  src/           USD, ProtocolHub, Oracle, SettlementToken, CurrencyBucket, NettingSession, Currency
   script/        Deploy.s.sol
-  test/          CurrencyBucket.t.sol
+  test/          CurrencyBucket.t.sol, NettingSession.t.sol
   app/           Vite + React dApp (FX Net)
   scripts/       oracle-feeder.mjs
   readme.md
@@ -180,12 +229,11 @@ node scripts/oracle-feeder.mjs --once
 # or: node scripts/oracle-feeder.mjs --currency clp
 ```
 
-Suggested smoke path:
+Suggested smoke path (settlement-first):
 
-1. **Admin** — mint USD; deposit reserve on CLP and ARS buckets; open MRW  
-2. **Oracle** — post CLP and ARS rates (or run the feeder)  
-3. **User** — mint/redeem each bucket; transfer tokens between accounts  
-4. **Admin** — close MRW; withdraw reserves within 100 blocks if headroom allows  
+1. **Admin / User** — mint USD and (via MRW) mint some CLP/ARS inventory; give **#2 ≥ 90 CLP**  
+2. **Settle** — run the [example graph](#example-graph-anvil-2--3--4) (open → post three rows → lock → fund/claim)  
+3. (Optional) Admin MRW / oracle / redeem flows for convertibility testing  
 
 ## Test focus
 
@@ -195,4 +243,5 @@ Suggested smoke path:
 - Redeem fee → `accruedFees`; partial redeem race; fees not spendable in race
 - Token transfers without allowlist
 - Allowlist enumeration
+- NettingSession: triangle zero-net, cross-currency fund/claim, lifecycle + pause gates
 - UUPS upgrade smoke on USD
