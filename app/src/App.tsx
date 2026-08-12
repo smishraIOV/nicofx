@@ -147,9 +147,18 @@ function TxStrip() {
               </div>
               <div className="tx-detail">{tx.detail}</div>
               {tx.hash && (
-                <code className="tx-hash">
-                  {tx.hash.slice(0, 10)}…{tx.hash.slice(-8)}
-                </code>
+                <div className="tx-hash-row">
+                  <code className="tx-hash" title={tx.hash}>
+                    {tx.hash.slice(0, 10)}…{tx.hash.slice(-8)}
+                  </code>
+                  <button
+                    type="button"
+                    className="ghost-sm"
+                    onClick={() => void copyText(tx.hash!)}
+                  >
+                    Copy hash
+                  </button>
+                </div>
               )}
             </li>
           ))}
@@ -575,6 +584,10 @@ function SettlePanel() {
       <p className="hint">
         Multilateral obligation book. Post debts → admin locks (nets) → debtors fund escrow →
         creditors claim. Mint/redeem is inventory only (not part of this session).
+      </p>
+      <p className="hint">
+        Only the current session is kept in contract storage; opening a new one clears the book.
+        Prior sessions can still be rebuilt from onchain events.
       </p>
 
       <div className="balances">

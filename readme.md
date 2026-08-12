@@ -59,6 +59,8 @@ Idle → Open (post obligations)
 
 **Fund / claim / escrow:** After lock, each party has a signed **net** per currency. Negative net → that party `fund`s `|net|` of the token into `NettingSession` (the escrow is this contract’s balance — there is no separate escrow contract). Positive net → they `claim` once that currency is fully funded. Funding is per-currency: CLP claims wait only on CLP debtors (same for ARS / USD).
 
+**Session history:** Contract storage keeps only the **current** session. Opening a new session clears the obligation book and nets. Prior sessions remain reconstructible from onchain events (`ObligationPosted`, `Funded`, `Claimed`, etc. keyed by `sessionId`); the Settle UI does not surface that archive yet.
+
 #### Example graph (Anvil #2 / #3 / #4)
 
 Ensure **#2** holds at least **90 CLP** of inventory (mint via User tab or transfer). Then on **Settle**:

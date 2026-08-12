@@ -614,9 +614,15 @@ button:disabled {
   color: var(--danger);
 }
 
-.tx-hash {
-  display: inline-block;
+.tx-hash-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
   margin-top: 0.25rem;
+  flex-wrap: wrap;
+}
+
+.tx-hash {
   font-size: 0.72rem;
   color: var(--muted);
 }
