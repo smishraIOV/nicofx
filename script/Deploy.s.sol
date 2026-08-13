@@ -95,6 +95,7 @@ contract Deploy is Script {
         hub.setAllowlist(USER3, true);
         clpBucket.setFeeBps(50);
         arsBucket.setFeeBps(50);
+        settlement.setFeeBps(50);
 
         vm.stopBroadcast();
 

@@ -6,6 +6,7 @@ import {AccessControlUpgradeable} from "@openzeppelin/contracts-upgradeable/acce
 import {UUPSUpgradeable} from "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 
 import {Currency} from "./Currency.sol";
 import {IProtocolHub} from "./interfaces/IProtocolHub.sol";
@@ -13,10 +14,14 @@ import {INettingSession} from "./interfaces/INettingSession.sol";
 
 /// @title NettingSession — multilateral obligation book; settle nets via token escrow
 /// @notice Does not mint/redeem through CurrencyBucket. Tokens are settlement inventory only.
+/// @dev Receipt fee haircuts `net > 0` claims. `eliminated` is informational (not billed).
 contract NettingSession is Initializable, AccessControlUpgradeable, UUPSUpgradeable, INettingSession {
     using SafeERC20 for IERC20;
 
     bytes32 public constant SESSION_ADMIN_ROLE = keccak256("SESSION_ADMIN_ROLE");
+
+    uint256 public constant BPS = 10_000;
+    uint16 public constant MAX_FEE_BPS = 1_000; // 10%
 
     IProtocolHub public hub;
     mapping(uint8 => IERC20) public tokens;
@@ -37,15 +42,24 @@ contract NettingSession is Initializable, AccessControlUpgradeable, UUPSUpgradea
     mapping(uint8 => uint256) private _escrowReceived;
     mapping(uint8 => uint256) private _escrowClaimed;
 
+    uint16 public feeBps;
+    /// @dev Per-currency receipt fees; persist across sessions until withdrawn
+    mapping(uint8 => uint256) public accruedFees;
+
     event SessionOpened(uint256 indexed sessionId);
     event ObligationPosted(
         uint256 indexed sessionId, uint256 indexed index, address debtor, address creditor, uint8 currency, uint256 amount
     );
     event SessionLocked(uint256 indexed sessionId, uint256 obligationCount, uint256 participantCount);
     event Funded(uint256 indexed sessionId, address indexed party, uint8 currency, uint256 amount);
-    event Claimed(uint256 indexed sessionId, address indexed party, uint8 currency, uint256 amount);
+    event Claimed(uint256 indexed sessionId, address indexed party, uint8 currency, uint256 amount, uint256 fee);
     event SessionSettled(uint256 indexed sessionId);
     event SessionCancelled(uint256 indexed sessionId);
+    event FeeBpsUpdated(uint16 feeBps);
+    event FeesWithdrawn(address indexed to, uint8 currency, uint256 amount);
+    event SessionVolume(
+        uint256 indexed sessionId, uint8 indexed currency, uint256 gross, uint256 residual, uint256 eliminated
+    );
 
     error ZeroAddress();
     error InvalidCurrency();
@@ -62,6 +76,8 @@ contract NettingSession is Initializable, AccessControlUpgradeable, UUPSUpgradea
     error CurrencyNotFullyFunded();
     error EscrowNotEmpty();
     error TokenNotSet();
+    error FeeTooHigh();
+    error InsufficientFees();
 
     /// @custom:oz-upgrades-unsafe-allow constructor
     constructor() {
@@ -112,6 +128,7 @@ contract NettingSession is Initializable, AccessControlUpgradeable, UUPSUpgradea
         _recomputeNets();
         phase = Phase.Locked;
         emit SessionLocked(sessionId, _obligations.length, _participants.length);
+        _emitSessionVolume();
         _maybeMarkSettled();
     }
 
@@ -124,6 +141,23 @@ contract NettingSession is Initializable, AccessControlUpgradeable, UUPSUpgradea
         }
         phase = Phase.Cancelled;
         emit SessionCancelled(sessionId);
+    }
+
+    function setFeeBps(uint16 feeBps_) external onlyRole(SESSION_ADMIN_ROLE) {
+        if (feeBps_ > MAX_FEE_BPS) revert FeeTooHigh();
+        feeBps = feeBps_;
+        emit FeeBpsUpdated(feeBps_);
+    }
+
+    function withdrawFees(uint8 currency, uint256 amount) external onlyRole(SESSION_ADMIN_ROLE) {
+        if (currency > Currency.USD) revert InvalidCurrency();
+        if (amount == 0) revert ZeroAmount();
+        if (amount > accruedFees[currency]) revert InsufficientFees();
+        unchecked {
+            accruedFees[currency] -= amount;
+        }
+        tokens[currency].safeTransfer(msg.sender, amount);
+        emit FeesWithdrawn(msg.sender, currency, amount);
     }
 
     // -------------------------------------------------------------------------
@@ -183,11 +217,19 @@ contract NettingSession is Initializable, AccessControlUpgradeable, UUPSUpgradea
         if (_claimed[msg.sender][currency]) revert AlreadyClaimed();
 
         uint256 amount = uint256(n);
+        uint256 fee = Math.mulDiv(amount, feeBps, BPS);
+        uint256 payout = amount - fee;
+
         _claimed[msg.sender][currency] = true;
         _escrowClaimed[currency] += amount;
-        tokens[currency].safeTransfer(msg.sender, amount);
+        if (fee > 0) {
+            accruedFees[currency] += fee;
+        }
+        if (payout > 0) {
+            tokens[currency].safeTransfer(msg.sender, payout);
+        }
 
-        emit Claimed(sessionId, msg.sender, currency, amount);
+        emit Claimed(sessionId, msg.sender, currency, amount, fee);
         _maybeMarkSettled();
     }
 
@@ -243,6 +285,29 @@ contract NettingSession is Initializable, AccessControlUpgradeable, UUPSUpgradea
         return _escrowReceived[currency] >= need;
     }
 
+    function grossPosted(uint8 currency) public view returns (uint256) {
+        uint256 n = _obligations.length;
+        uint256 gross;
+        for (uint256 i = 0; i < n; ++i) {
+            if (_obligations[i].currency == currency) {
+                gross += _obligations[i].amount;
+            }
+        }
+        return gross;
+    }
+
+    /// @notice Payment volume eliminated by netting. Meaningful after lock; 0 before.
+    function eliminated(uint8 currency) public view returns (uint256) {
+        if (phase != Phase.Locked && phase != Phase.Settled) return 0;
+        uint256 gross = grossPosted(currency);
+        uint256 residual = _totalCreditorNets[currency];
+        return gross > residual ? gross - residual : 0;
+    }
+
+    function feeOn(uint256 amount) public view returns (uint256) {
+        return Math.mulDiv(amount, feeBps, BPS);
+    }
+
     // -------------------------------------------------------------------------
     // Internal
     // -------------------------------------------------------------------------
@@ -278,6 +343,16 @@ contract NettingSession is Initializable, AccessControlUpgradeable, UUPSUpgradea
             delete _totalDebtorNets[c];
             delete _escrowReceived[c];
             delete _escrowClaimed[c];
+        }
+    }
+
+    function _emitSessionVolume() internal {
+        for (uint8 c = 0; c <= Currency.USD; ++c) {
+            uint256 gross = grossPosted(c);
+            if (gross == 0) continue;
+            uint256 residual = _totalCreditorNets[c];
+            uint256 elim = gross > residual ? gross - residual : 0;
+            emit SessionVolume(sessionId, c, gross, residual, elim);
         }
     }
 

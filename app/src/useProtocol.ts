@@ -64,6 +64,7 @@ export type PartyNetRow = {
 export type SettlementState = {
   phase: number
   sessionId: bigint
+  feeBps: number
   obligations: ObligationRow[]
   participants: Address[]
   partyNets: PartyNetRow[]
@@ -71,6 +72,9 @@ export type SettlementState = {
   totalCreditor: Record<SettlementCurrency, bigint>
   totalDebtor: Record<SettlementCurrency, bigint>
   fullyFunded: Record<SettlementCurrency, boolean>
+  accruedFees: Record<SettlementCurrency, bigint>
+  grossPosted: Record<SettlementCurrency, bigint>
+  eliminated: Record<SettlementCurrency, bigint>
   usdAllowanceSettlement: bigint
   clpAllowanceSettlement: bigint
   arsAllowanceSettlement: bigint
@@ -132,6 +136,7 @@ const emptyCurrencyRecord = <T,>(v: T): Record<SettlementCurrency, T> => ({
 const emptySettlement: SettlementState = {
   phase: 0,
   sessionId: 0n,
+  feeBps: 0,
   obligations: [],
   participants: [],
   partyNets: [],
@@ -139,6 +144,9 @@ const emptySettlement: SettlementState = {
   totalCreditor: emptyCurrencyRecord(0n),
   totalDebtor: emptyCurrencyRecord(0n),
   fullyFunded: emptyCurrencyRecord(false),
+  accruedFees: emptyCurrencyRecord(0n),
+  grossPosted: emptyCurrencyRecord(0n),
+  eliminated: emptyCurrencyRecord(0n),
   usdAllowanceSettlement: 0n,
   clpAllowanceSettlement: 0n,
   arsAllowanceSettlement: 0n,
@@ -258,9 +266,10 @@ async function readSettlement(
   if (!hasSettlement()) return emptySettlement
 
   const settlement = deployments.settlement
-  const [phase, sessionId, obligationsRaw, participantsRaw] = await Promise.all([
+  const [phase, sessionId, feeBps, obligationsRaw, participantsRaw] = await Promise.all([
     publicClient.readContract({ address: settlement, abi: settlementAbi, functionName: 'phase' }),
     publicClient.readContract({ address: settlement, abi: settlementAbi, functionName: 'sessionId' }),
+    publicClient.readContract({ address: settlement, abi: settlementAbi, functionName: 'feeBps' }),
     publicClient.readContract({
       address: settlement,
       abi: settlementAbi,
@@ -287,11 +296,14 @@ async function readSettlement(
   const totalCreditor = emptyCurrencyRecord(0n)
   const totalDebtor = emptyCurrencyRecord(0n)
   const fullyFunded = emptyCurrencyRecord(false)
+  const accruedFees = emptyCurrencyRecord(0n)
+  const grossPosted = emptyCurrencyRecord(0n)
+  const eliminated = emptyCurrencyRecord(0n)
 
   await Promise.all(
     SETTLEMENT_CURRENCIES.map(async (id) => {
       const c = CURRENCY[id]
-      const [esc, cred, debt, funded] = await Promise.all([
+      const [esc, cred, debt, funded, fees, gross, elim] = await Promise.all([
         publicClient.readContract({
           address: settlement,
           abi: settlementAbi,
@@ -316,11 +328,32 @@ async function readSettlement(
           functionName: 'currencyFullyFunded',
           args: [c],
         }),
+        publicClient.readContract({
+          address: settlement,
+          abi: settlementAbi,
+          functionName: 'accruedFees',
+          args: [c],
+        }),
+        publicClient.readContract({
+          address: settlement,
+          abi: settlementAbi,
+          functionName: 'grossPosted',
+          args: [c],
+        }),
+        publicClient.readContract({
+          address: settlement,
+          abi: settlementAbi,
+          functionName: 'eliminated',
+          args: [c],
+        }),
       ])
       escrow[id] = esc as bigint
       totalCreditor[id] = cred as bigint
       totalDebtor[id] = debt as bigint
       fullyFunded[id] = funded as boolean
+      accruedFees[id] = fees as bigint
+      grossPosted[id] = gross as bigint
+      eliminated[id] = elim as bigint
     }),
   )
 
@@ -385,6 +418,7 @@ async function readSettlement(
   return {
     phase: Number(phase),
     sessionId: sessionId as bigint,
+    feeBps: Number(feeBps),
     obligations,
     participants,
     partyNets,
@@ -392,6 +426,9 @@ async function readSettlement(
     totalCreditor,
     totalDebtor,
     fullyFunded,
+    accruedFees,
+    grossPosted,
+    eliminated,
     usdAllowanceSettlement: usdAllowanceSettlement as bigint,
     clpAllowanceSettlement: clpAllowanceSettlement as bigint,
     arsAllowanceSettlement: arsAllowanceSettlement as bigint,
@@ -749,6 +786,9 @@ export function useProtocolController() {
       approveSettlementToken(currency).then(() => writeSettlement('fund', [CURRENCY[currency]])),
     claimSettlement: (currency: SettlementCurrency) =>
       writeSettlement('claim', [CURRENCY[currency]]),
+    setSettlementFeeBps: (bps: number) => writeSettlement('setFeeBps', [bps]),
+    withdrawSettlementFees: (currency: SettlementCurrency, amount: string) =>
+      writeSettlement('withdrawFees', [CURRENCY[currency], parseEther(amount)]),
   }
 }
 

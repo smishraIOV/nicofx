@@ -218,6 +218,9 @@ function AdminPanel() {
   const [feeBps, setFeeBps] = useState(String(p.active.feeBps || 50))
   const [allowAddr, setAllowAddr] = useState<string>(ANVIL_ACCOUNTS[2].address)
   const [feeWithdraw, setFeeWithdraw] = useState('1')
+  const [settlementFeeBps, setSettlementFeeBps] = useState(String(p.state.settlement.feeBps || 50))
+  const [settlementFeeCcy, setSettlementFeeCcy] = useState<SettlementCurrency>('clp')
+  const [settlementFeeWithdraw, setSettlementFeeWithdraw] = useState('1')
 
   return (
     <Panel title="Admin">
@@ -308,6 +311,55 @@ function AdminPanel() {
         </Field>
         <button type="submit" disabled={p.busy}>
           Withdraw fees
+        </button>
+      </form>
+
+      <p className="hint">
+        Settlement receipt fee haircuts net claims (not funds). Accrued in the session contract, not
+        bucket collateral. Equal cycles with nothing to claim are free.
+      </p>
+      <form
+        className="form-row"
+        onSubmit={(e) => {
+          e.preventDefault()
+          void p.setSettlementFeeBps(Number(settlementFeeBps))
+        }}
+      >
+        <Field label="Settlement receipt fee (bps)">
+          <input
+            value={settlementFeeBps}
+            onChange={(e) => setSettlementFeeBps(e.target.value)}
+          />
+        </Field>
+        <button type="submit" disabled={p.busy}>
+          Set settlement fee
+        </button>
+      </form>
+      <form
+        className="form-row"
+        onSubmit={(e) => {
+          e.preventDefault()
+          void p.withdrawSettlementFees(settlementFeeCcy, settlementFeeWithdraw)
+        }}
+      >
+        <Field label="Withdraw settlement fees">
+          <select
+            value={settlementFeeCcy}
+            onChange={(e) => setSettlementFeeCcy(e.target.value as SettlementCurrency)}
+          >
+            <option value="clp">CLP</option>
+            <option value="ars">ARS</option>
+            <option value="usd">USD</option>
+          </select>
+        </Field>
+        <Field label={`Amount (${formatEther(p.state.settlement.accruedFees[settlementFeeCcy])} accrued)`}>
+          <input
+            value={settlementFeeWithdraw}
+            onChange={(e) => setSettlementFeeWithdraw(e.target.value)}
+          />
+        </Field>
+        <button type="submit" disabled={p.busy}>
+          Withdraw
         </button>
       </form>
 
@@ -547,6 +599,10 @@ function currencyName(id: number): string {
   return `cur${id}`
 }
 
+function bpsFee(amount: bigint, bps: number): bigint {
+  return (amount * BigInt(bps)) / 10_000n
+}
+
 function formatSigned(n: bigint): string {
   const abs = n < 0n ? -n : n
   const s = formatEther(abs)
@@ -583,11 +639,13 @@ function SettlePanel() {
     <Panel title="Settle">
       <p className="hint">
         Multilateral obligation book. Post debts → admin locks (nets) → debtors fund escrow →
-        creditors claim. Mint/redeem is inventory only (not part of this session).
+        creditors claim (receipt fee haircuts the claim). Mint/redeem is inventory only (not part of
+        this session).
       </p>
       <p className="hint">
         Only the current session is kept in contract storage; opening a new one clears the book.
-        Prior sessions can still be rebuilt from onchain events.
+        Prior sessions can still be rebuilt from onchain events. Equal cycles (nothing to claim) pay
+        no receipt fee; eliminated volume is shown after lock as a service metric, not a bill.
       </p>
 
       <div className="balances">
@@ -606,6 +664,10 @@ function SettlePanel() {
         <div>
           <span>Parties</span>
           <strong>{s.participants.length}</strong>
+        </div>
+        <div>
+          <span>Receipt fee</span>
+          <strong>{s.feeBps} bps</strong>
         </div>
       </div>
 
@@ -755,6 +817,12 @@ function SettlePanel() {
               {formatEther(s.totalDebtor.usd)}
               {s.fullyFunded.usd ? ' (funded)' : ''}
             </p>
+            <p className="hint">
+              Eliminated (gross − residual, not billed) — CLP {formatEther(s.eliminated.clp)} of{' '}
+              {formatEther(s.grossPosted.clp)} · ARS {formatEther(s.eliminated.ars)} of{' '}
+              {formatEther(s.grossPosted.ars)} · USD {formatEther(s.eliminated.usd)} of{' '}
+              {formatEther(s.grossPosted.usd)}
+            </p>
           </div>
 
           {s.phase === 2 && myNets && (
@@ -774,6 +842,8 @@ function SettlePanel() {
                   )
                 }
                 if (net > 0n && !myNets.claimed[c]) {
+                  const fee = bpsFee(net, s.feeBps)
+                  const payout = net - fee
                   return (
                     <button
                       key={`claim-${c}`}
@@ -781,7 +851,8 @@ function SettlePanel() {
                       disabled={p.busy || p.state.paused || !s.fullyFunded[c]}
                       onClick={() => void p.claimSettlement(c)}
                     >
-                      Claim {formatEther(net)} {bucketLabel(c)}
+                      Claim {formatEther(payout)} {bucketLabel(c)}
+                      {fee > 0n ? ` (−${formatEther(fee)} fee)` : ''}
                       {!s.fullyFunded[c] ? ' (wait)' : ''}
                     </button>
                   )

@@ -183,6 +183,76 @@ contract NettingSessionTest is Test {
         assertEq(uint8(session.phase()), uint8(INettingSession.Phase.Settled));
     }
 
+    function test_ReceiptFeeHaircutsClaim() public {
+        _mintInventory(alice, 90e18, 0, 0);
+        _approveSession(alice);
+
+        vm.prank(admin);
+        session.setFeeBps(50); // 0.50%
+
+        vm.prank(admin);
+        session.openSession();
+        vm.prank(alice);
+        session.postObligation(alice, bob, Currency.CLP, 100e18);
+        vm.prank(bob);
+        session.postObligation(bob, carol, Currency.CLP, 40e18);
+        vm.prank(carol);
+        session.postObligation(carol, alice, Currency.CLP, 10e18);
+
+        vm.prank(admin);
+        session.lockSession();
+
+        assertEq(session.grossPosted(Currency.CLP), 150e18);
+        assertEq(session.eliminated(Currency.CLP), 60e18);
+
+        vm.prank(alice);
+        session.fund(Currency.CLP);
+
+        vm.prank(bob);
+        session.claim(Currency.CLP);
+        vm.prank(carol);
+        session.claim(Currency.CLP);
+
+        // 50 bps of 60 and 30
+        assertEq(clp.balanceOf(bob), 59.7e18);
+        assertEq(clp.balanceOf(carol), 29.85e18);
+        assertEq(session.accruedFees(Currency.CLP), 0.45e18);
+        assertEq(clp.balanceOf(address(session)), 0.45e18);
+        assertEq(uint8(session.phase()), uint8(INettingSession.Phase.Settled));
+
+        vm.prank(admin);
+        session.withdrawFees(Currency.CLP, 0.45e18);
+        assertEq(session.accruedFees(Currency.CLP), 0);
+        assertEq(clp.balanceOf(admin), 0.45e18);
+    }
+
+    function test_EqualCycleFreeAndEliminated() public {
+        vm.prank(admin);
+        session.setFeeBps(50);
+
+        vm.prank(admin);
+        session.openSession();
+        vm.prank(alice);
+        session.postObligation(alice, bob, Currency.CLP, 100e18);
+        vm.prank(bob);
+        session.postObligation(bob, carol, Currency.CLP, 100e18);
+        vm.prank(carol);
+        session.postObligation(carol, alice, Currency.CLP, 100e18);
+
+        vm.prank(admin);
+        session.lockSession();
+
+        assertEq(session.eliminated(Currency.CLP), 300e18);
+        assertEq(session.accruedFees(Currency.CLP), 0);
+        assertEq(uint8(session.phase()), uint8(INettingSession.Phase.Settled));
+    }
+
+    function test_FeeTooHighReverts() public {
+        vm.prank(admin);
+        vm.expectRevert(NettingSession.FeeTooHigh.selector);
+        session.setFeeBps(1001);
+    }
+
     function test_NonAllowlistedCannotPost() public {
         vm.prank(admin);
         session.openSession();

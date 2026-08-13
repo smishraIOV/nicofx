@@ -15,7 +15,7 @@ Tokens are not meant for retail use — only allowlisted enterprise addresses ma
 - Shared admin-controlled mint/redeem window (MRW) and allowlist via `ProtocolHub`
 - Shared trusted oracle posting per-currency rates (`clpPerUsd`, `arsPerUsd`)
 - 110% collateralization per bucket (10% admin buffer. provided by protocol operator for each bucket)
-- Protocol fee (bps), only for redeeming USD, tracked as `accruedFees` per bucket
+- Protocol fee (bps) on **redeem to USD** (per bucket) and on **netting receipts** (session)
 - dApp (FX Net): Settle / Admin / Oracle / User
 - Local stack: Foundry (`forge`, `cast`, `anvil`)
 
@@ -28,7 +28,7 @@ Tokens are not meant for retail use — only allowlisted enterprise addresses ma
 | `Oracle` | Trusted multi-rate publisher (`setRate(currency, rate)`) |
 | `SettlementToken` | Upgradeable ERC20 (CLP / ARS instances); mint/burn only via its bucket |
 | `CurrencyBucket` | Isolated USD vault, mint/redeem, fee, reserves for one currency |
-| `NettingSession` | Multilateral obligation book; lock → net → holds token escrow for fund/claim |
+| `NettingSession` | Multilateral obligation book; lock → net → escrow fund/claim; receipt fee on claims |
 
 Upgradeability: UUPS for `USD`, `ProtocolHub`, `SettlementToken`, `CurrencyBucket`, `NettingSession`. Oracle is non-upgradeable.
 
@@ -54,12 +54,16 @@ Idle → Open (post obligations)
 
 - `postObligation(debtor, creditor, currency, amount)` — currency is CLP / ARS / USD; poster is debtor or session admin; both parties allowlisted
 - On `lockSession`, nets are `Σ owed_to − Σ owes` per party per currency (not the raw IOUs)
-- Debtors `fund(currency)`; creditors `claim(currency)` once that currency’s escrow is fully funded
-- Perfect multilateral cycles can net to zero and settle immediately on lock
+- Debtors `fund(currency)`; creditors `claim(currency)` once that currency’s escrow is fully funded (claim is haircut by the receipt fee)
+- Perfect multilateral cycles can net to zero and settle immediately on lock (no receipts → no fee)
 
-**Fund / claim / escrow:** After lock, each party has a signed **net** per currency. Negative net → that party `fund`s `|net|` of the token into `NettingSession` (the escrow is this contract’s balance — there is no separate escrow contract). Positive net → they `claim` once that currency is fully funded. Funding is per-currency: CLP claims wait only on CLP debtors (same for ARS / USD).
+**Fund / claim / escrow:** After lock, each party has a signed **net** per currency. Negative net → that party `fund`s `|net|` of the token into `NettingSession` (the escrow is this contract’s balance — there is no separate escrow contract). Positive net → they `claim` once that currency is fully funded, receiving `net − fee`. Funding is per-currency: CLP claims wait only on CLP debtors (same for ARS / USD).
 
-**Session history:** Contract storage keeps only the **current** session. Opening a new session clears the obligation book and nets. Prior sessions remain reconstructible from onchain events (`ObligationPosted`, `Funded`, `Claimed`, etc. keyed by `sessionId`); the Settle UI does not surface that archive yet.
+**Receipt fee:** Session `feeBps` (cap 1000) applies only to **net receipts**. Debtors who fund pay nothing. Fees stay in the session as per-currency `accruedFees` (not bucket collateral); session admin `withdrawFees`. Equal cycles with nothing to claim are free.
+
+**Eliminated volume** (informational, not billed): after lock, per currency `eliminated = grossPosted − residual` where residual is `Σ` positive nets. The triangle below eliminates 60 CLP of 150 gross.
+
+**Session history:** Contract storage keeps only the **current** session. Opening a new session clears the obligation book and nets (accrued fees persist until withdrawn). Prior sessions remain reconstructible from onchain events (`ObligationPosted`, `Funded`, `Claimed`, `SessionVolume`, etc. keyed by `sessionId`); the Settle UI does not surface that archive yet.
 
 #### Example graph (Anvil #2 / #3 / #4)
 
@@ -84,7 +88,7 @@ Ensure **#2** holds at least **90 CLP** of inventory (mint via User tab or trans
 
 4. Switch to **#2** → Fund 90 CLP → **#3** Claim 60 → **#4** Claim 30 → **Settled**
 
-Gross claims were 150 CLP; only **90 CLP** moves through escrow. A perfect cycle (50+50+50 the other way) nets to zero on lock with no fund/claim.
+At the default **50 bps** receipt fee, #3 receives 59.7 CLP and #4 receives 29.85 CLP (0.45 CLP stays as session `accruedFees`). Gross obligations were 150 CLP; **90 CLP** moves through escrow; **60 CLP eliminated** (shown in the UI, not billed). A perfect cycle (50+50+50 the other way) nets to zero on lock with no fund/claim and no fee.
 
 **Follow-up (not in this version):** auto mint/redeem inside a session to cover residuals; counterparty acceptance; coupling settlement calendar to MRW.
 
@@ -108,7 +112,8 @@ Gross claims were 150 CLP; only **90 CLP** moves through escrow. A perfect cycle
 |------|----------------|
 | **USD_Admin** | Mint USD |
 | **Hub_Admin** | Open/close MRW; pause/unpause; manage shared allowlist |
-| **Bucket_Admin** | Per-bucket deposit/withdraw reserve; set fee; withdraw fees; upgrade that bucket/token |
+| **Bucket_Admin** | Per-bucket deposit/withdraw reserve; set redeem fee; withdraw bucket fees; upgrade that bucket/token |
+| **Session_Admin** | Open/lock/cancel session; set receipt fee; withdraw settlement fees; upgrade NettingSession |
 | **Trusted_Oracle** | Post CLP and ARS rates (MRW open, hub not paused) |
 | **Users** | Allowlisted: mint/redeem in open MRW; post/fund/claim settlement; anyone: transfer tokens |
 
@@ -127,9 +132,11 @@ mint:          tokenOut = usdIn * ratePerUsd / 1e18
 redeem gross:  grossUsd = tokenIn * 1e18 / ratePerUsd
 ```
 
-### Protocol fee (redeem only)
+### Protocol fees
 
-Per-bucket `feeBps` (cap 1000). Fee USD stays in that bucket’s vault as `accruedFees` (excluded from collateral). Admin may `withdrawFees` anytime.
+**Redeem (per bucket):** `feeBps` (cap 1000) on USD paid out. Fee USD stays in that bucket’s vault as `accruedFees` (excluded from collateral). Admin may `withdrawFees` anytime.
+
+**Settlement receipts (session):** `feeBps` (cap 1000) on `net > 0` claims only. Haircut stays in `NettingSession` as per-currency `accruedFees`. Session admin may `withdrawFees(currency, amount)` anytime. Not mixed with bucket collateral.
 
 ## Collateralization (110%, per bucket)
 
@@ -183,8 +190,8 @@ Vite + React + wagmi/viem against Anvil:
 
 | View | Actions |
 |------|---------|
-| **Settle** | Open/lock/cancel session; post obligations; view nets; fund/claim residuals |
-| **Admin** | Shared MRW/pause/allowlist; mint USD; per-bucket reserve & fee (bucket switcher) |
+| **Settle** | Open/lock/cancel session; post obligations; view nets + eliminated; fund/claim residuals |
+| **Admin** | Shared MRW/pause/allowlist; mint USD; per-bucket reserve & redeem fee; settlement receipt fee |
 | **Oracle** | Post CLP and ARS rates |
 | **User** | Mint/redeem inventory; transfer USD/CLP/ARS; pick/copy allowlisted recipients |
 
@@ -242,8 +249,8 @@ Suggested smoke path (settlement-first):
 - Shared allowlist / MRW / pause gating both buckets and oracle
 - Per-bucket mint headroom and 110% floor
 - Cross-bucket isolation (ARS stress does not drain CLP vault)
-- Redeem fee → `accruedFees`; partial redeem race; fees not spendable in race
+- Redeem fee → bucket `accruedFees`; partial redeem race; fees not spendable in race
 - Token transfers without allowlist
 - Allowlist enumeration
-- NettingSession: triangle zero-net, cross-currency fund/claim, lifecycle + pause gates
+- NettingSession: triangle zero-net, receipt-fee haircut, eliminated volume, cross-currency fund/claim, lifecycle + pause gates
 - UUPS upgrade smoke on USD

@@ -28,4 +28,9 @@ interface INettingSession {
     function totalCreditorNets(uint8 currency) external view returns (uint256);
     function escrowBalance(uint8 currency) external view returns (uint256);
     function currencyFullyFunded(uint8 currency) external view returns (bool);
+    function feeBps() external view returns (uint16);
+    function accruedFees(uint8 currency) external view returns (uint256);
+    function grossPosted(uint8 currency) external view returns (uint256);
+    function eliminated(uint8 currency) external view returns (uint256);
+    function feeOn(uint256 amount) external view returns (uint256);
 }
