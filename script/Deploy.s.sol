@@ -32,7 +32,8 @@ contract Deploy is Script {
         ProtocolHub hub = ProtocolHub(
             address(new ERC1967Proxy(address(new ProtocolHub()), abi.encodeCall(ProtocolHub.initialize, (admin))))
         );
-        Oracle oracle = new Oracle(admin, ORACLE_OP);
+        // 5% max single-window rate move; owner can override via forceSetRate for a genuine jump
+        Oracle oracle = new Oracle(admin, ORACLE_OP, 500);
         oracle.setHub(address(hub));
 
         SettlementToken clp = SettlementToken(
@@ -93,8 +94,11 @@ contract Deploy is Script {
         hub.setAllowlist(USER1, true);
         hub.setAllowlist(USER2, true);
         hub.setAllowlist(USER3, true);
-        clpBucket.setFeeBps(50);
-        arsBucket.setFeeBps(50);
+        // Two-way pricing: charge on inventory creation as well as exit (review R1-C2)
+        clpBucket.setMintFeeBps(25);
+        clpBucket.setRedeemFeeBps(50);
+        arsBucket.setMintFeeBps(25);
+        arsBucket.setRedeemFeeBps(50);
         settlement.setFeeBps(50);
 
         vm.stopBroadcast();

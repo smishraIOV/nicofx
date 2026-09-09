@@ -7,6 +7,11 @@
  *   - contracts deployed (app/src/contracts/deployments.json)
  *   - MRW open and hub not paused
  *
+ * The Oracle accepts one rate per currency per MRW (so the price a party mints at is the price it
+ * redeems at within that window), and rejects a move larger than its `maxDeviationBps`. The feeder
+ * therefore skips a currency whose rate is already set for the current window, and reports a
+ * rejected move rather than retrying it.
+ *
  * Usage:
  *   node scripts/oracle-feeder.mjs
  *   node scripts/oracle-feeder.mjs --once
@@ -90,6 +95,19 @@ function readBool(address, sig) {
   return out === 'true' || out.endsWith('1')
 }
 
+/// One rate per currency per window — check before spending a transaction on a certain revert.
+function canSetRate(deployments, currencyId) {
+  const out = cast([
+    'call',
+    deployments.oracle,
+    'canSetRate(uint8)(bool)',
+    String(currencyId),
+    '--rpc-url',
+    RPC_URL,
+  ])
+  return out === 'true' || out.endsWith('1')
+}
+
 function postRate(deployments, currencyId, rateWei) {
   const hub = deployments.hub
   const windowOpen = readBool(hub, 'windowOpen()(bool)')
@@ -126,8 +144,26 @@ async function tick() {
   for (const job of jobs) {
     const rateWei = toWei18(job.rate)
     console.log(`[feeder] USD/${job.id.toUpperCase()}=${job.rate} → ratePerUsd=${rateWei}`)
-    const tx = postRate(deployments, job.currencyId, rateWei)
-    console.log(`[feeder] posted ${job.id} ok\n${tx}`)
+    if (!canSetRate(deployments, job.currencyId)) {
+      console.log(
+        `[feeder] skip ${job.id}: this window already has a rate (or the window is closed/paused)`,
+      )
+      continue
+    }
+    try {
+      const tx = postRate(deployments, job.currencyId, rateWei)
+      console.log(`[feeder] posted ${job.id} ok\n${tx}`)
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e)
+      if (msg.includes('DeviationTooLarge')) {
+        console.error(
+          `[feeder] ${job.id} rejected: move exceeds the oracle deviation bound. ` +
+            'If the move is genuine, the owner can post it with forceSetRate.',
+        )
+      } else {
+        throw e
+      }
+    }
   }
 }
 

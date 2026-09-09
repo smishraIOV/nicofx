@@ -6,6 +6,14 @@ The 10% overcollateralization buffer absorbs limited adverse FX moves. If the do
 
 Because the oracle can update the rate only while MRW is open, a large update at or after window open can tip the system underwater while mint/redeem are live.
 
+## What the pricing changes do and do not fix
+
+Following review finding R1-C2, the oracle now accepts **one rate per currency per window** and the bucket charges a **mint fee as well as a redeem fee**. That closes the *risk-free* version of this exposure: a party can no longer mint at one rate and redeem at another inside the same window, and a round trip costs `mintFeeBps + redeemFeeBps`.
+
+It does **not** close the exposure described on this page. A holder who keeps inventory across a rate change still gains on a favourable move at the buffer's expense — measured at roughly **4.47% on a 5% move**, against 4.74% before the fees. Fees of a few dozen bps cannot price a multi-percent FX move, so the controls that actually matter are still the ones listed below plus per-bucket mint caps and a coverage breaker (ideation.md Phase B). Option 5 ("block adverse rate updates") is partially in place already, in the weaker form of an oracle **deviation bound** with an owner `forceSetRate` override.
+
+Reserve withdrawal is no longer a route out of this: it requires a fresh current-window rate, a 25-block timelock, and leaves a 115% floor rather than 110% (review R1-H5, R1-M1).
+
 ## Chosen approach (v1)
 
 **First-come, first-served (race)** with **proportional burn** on shortfall:

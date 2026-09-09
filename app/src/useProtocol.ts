@@ -34,50 +34,77 @@ import {
 import { useWallet } from './wallet'
 
 export type BucketState = {
-  feeBps: number
+  mintFeeBps: number
+  redeemFeeBps: number
   accruedFees: bigint
   vaultBalance: bigint
   collateralUsd: bigint
   liabilityUsd: bigint
   reserveUsd: bigint
   mintHeadroomUsd: bigint
+  coverageRatioBps: bigint
+  withdrawableReserveUsd: bigint
   tokenBalance: bigint
   tokenAllowance: bigint
   ratePerUsd: bigint
   rateWindowNonce: bigint
+  rateIsFresh: boolean
+  maxRateAge: bigint
+  /// Pending timelocked reserve withdrawal (R1-M1); amount 0 = none
+  pendingWithdrawalAmount: bigint
+  pendingWithdrawalBlock: bigint
+  withdrawalDelayBlocks: bigint
+  /// liabilityUsd reverts when a rate is missing while supply is outstanding (R1-H5)
+  liabilityUnavailable: boolean
 }
 
 export type ObligationRow = {
+  index: number
   debtor: Address
   creditor: Address
   currency: number
   amount: bigint
+  ref: string
+  debtorAck: boolean
+  creditorAck: boolean
+  included: boolean
+  voided: boolean
 }
 
 export type PartyNetRow = {
   party: Address
-  nets: Record<SettlementCurrency, bigint> // signed as bigint (negative = debtor)
-  funded: Record<SettlementCurrency, boolean>
+  nets: Record<SettlementCurrency, bigint> // signed (negative = debtor)
+  /// |net| + receipt fee — debtors now carry the fee so creditors are paid at face value (R1-M4)
+  required: Record<SettlementCurrency, bigint>
+  deposited: Record<SettlementCurrency, bigint>
+  outstanding: Record<SettlementCurrency, bigint>
   claimed: Record<SettlementCurrency, boolean>
 }
 
 export type SettlementState = {
   phase: number
   sessionId: bigint
-  feeBps: number
+  /// Fee this session was opened with; cannot be re-priced mid-session (R1-H3)
+  sessionFeeBps: number
+  /// Fee that will apply to the next session opened
+  nextFeeBps: number
+  fundingDeadline: bigint
+  fundingWindowBlocks: bigint
   obligations: ObligationRow[]
   participants: Address[]
   partyNets: PartyNetRow[]
+  includedCount: bigint
+  pendingAckCount: bigint
+  counterpartyPairs: bigint
   escrow: Record<SettlementCurrency, bigint>
-  totalCreditor: Record<SettlementCurrency, bigint>
-  totalDebtor: Record<SettlementCurrency, bigint>
+  totalNets: Record<SettlementCurrency, bigint>
+  totalRequired: Record<SettlementCurrency, bigint>
+  shortfall: Record<SettlementCurrency, bigint>
   fullyFunded: Record<SettlementCurrency, boolean>
   accruedFees: Record<SettlementCurrency, bigint>
   grossPosted: Record<SettlementCurrency, bigint>
   eliminated: Record<SettlementCurrency, bigint>
-  usdAllowanceSettlement: bigint
-  clpAllowanceSettlement: bigint
-  arsAllowanceSettlement: bigint
+  quarantineAddress: Address
 }
 
 export type ProtocolState = {
@@ -114,17 +141,26 @@ export type TxEntry = {
 export type TransferToken = 'usd' | 'clp' | 'ars'
 
 const emptyBucket: BucketState = {
-  feeBps: 0,
+  mintFeeBps: 0,
+  redeemFeeBps: 0,
   accruedFees: 0n,
   vaultBalance: 0n,
   collateralUsd: 0n,
   liabilityUsd: 0n,
   reserveUsd: 0n,
   mintHeadroomUsd: 0n,
+  coverageRatioBps: 0n,
+  withdrawableReserveUsd: 0n,
   tokenBalance: 0n,
   tokenAllowance: 0n,
   ratePerUsd: 0n,
   rateWindowNonce: 0n,
+  rateIsFresh: false,
+  maxRateAge: 0n,
+  pendingWithdrawalAmount: 0n,
+  pendingWithdrawalBlock: 0n,
+  withdrawalDelayBlocks: 0n,
+  liabilityUnavailable: false,
 }
 
 const emptyCurrencyRecord = <T,>(v: T): Record<SettlementCurrency, T> => ({
@@ -136,20 +172,25 @@ const emptyCurrencyRecord = <T,>(v: T): Record<SettlementCurrency, T> => ({
 const emptySettlement: SettlementState = {
   phase: 0,
   sessionId: 0n,
-  feeBps: 0,
+  sessionFeeBps: 0,
+  nextFeeBps: 0,
+  fundingDeadline: 0n,
+  fundingWindowBlocks: 0n,
   obligations: [],
   participants: [],
   partyNets: [],
+  includedCount: 0n,
+  pendingAckCount: 0n,
+  counterpartyPairs: 0n,
   escrow: emptyCurrencyRecord(0n),
-  totalCreditor: emptyCurrencyRecord(0n),
-  totalDebtor: emptyCurrencyRecord(0n),
+  totalNets: emptyCurrencyRecord(0n),
+  totalRequired: emptyCurrencyRecord(0n),
+  shortfall: emptyCurrencyRecord(0n),
   fullyFunded: emptyCurrencyRecord(false),
   accruedFees: emptyCurrencyRecord(0n),
   grossPosted: emptyCurrencyRecord(0n),
   eliminated: emptyCurrencyRecord(0n),
-  usdAllowanceSettlement: 0n,
-  clpAllowanceSettlement: 0n,
-  arsAllowanceSettlement: 0n,
+  quarantineAddress: '0x0000000000000000000000000000000000000000',
 }
 
 const empty: ProtocolState = {
@@ -170,6 +211,32 @@ const empty: ProtocolState = {
   blockNumber: 0n,
   buckets: { clp: emptyBucket, ars: emptyBucket },
   settlement: emptySettlement,
+}
+
+/// Views that can revert (see H5) are read through this so one bad rate cannot blank the whole UI.
+async function safeRead<T>(p: Promise<unknown>, fallback: T): Promise<T> {
+  try {
+    return (await p) as T
+  } catch {
+    return fallback
+  }
+}
+
+/// Obligations carry an external reference (invoice / trade id), unique per session (R1-H1).
+export function refToBytes32(ref: string): `0x${string}` {
+  const bytes = new TextEncoder().encode(ref)
+  if (bytes.length > 32) throw new Error('reference must be 32 bytes or fewer')
+  let hex = ''
+  for (const b of bytes) hex += b.toString(16).padStart(2, '0')
+  return `0x${hex.padEnd(64, '0')}`
+}
+
+export function bytes32ToRef(value: string): string {
+  const hex = value.replace(/^0x/, '').replace(/(00)+$/, '')
+  if (hex.length === 0) return ''
+  const bytes = new Uint8Array(hex.length / 2)
+  for (let i = 0; i < bytes.length; i++) bytes[i] = parseInt(hex.slice(i * 2, i * 2 + 2), 16)
+  return new TextDecoder().decode(bytes)
 }
 
 function formatTxError(e: unknown): string {
@@ -199,25 +266,26 @@ async function readBucket(
   const currency = CURRENCY[id]
 
   const [
-    feeBps,
+    mintFeeBps,
+    redeemFeeBps,
     accruedFees,
     vaultBalance,
     collateralUsd,
-    liabilityUsd,
-    reserveUsd,
-    mintHeadroomUsd,
     tokenBalance,
     tokenAllowance,
     ratePerUsd,
     rateWindowNonce,
+    rateIsFresh,
+    maxRateAge,
+    pending,
+    withdrawalDelayBlocks,
+    liability,
   ] = await Promise.all([
-    publicClient.readContract({ address: engine, abi: bucketAbi, functionName: 'feeBps' }),
+    publicClient.readContract({ address: engine, abi: bucketAbi, functionName: 'mintFeeBps' }),
+    publicClient.readContract({ address: engine, abi: bucketAbi, functionName: 'redeemFeeBps' }),
     publicClient.readContract({ address: engine, abi: bucketAbi, functionName: 'accruedFees' }),
     publicClient.readContract({ address: engine, abi: bucketAbi, functionName: 'vaultBalance' }),
     publicClient.readContract({ address: engine, abi: bucketAbi, functionName: 'collateralUsd' }),
-    publicClient.readContract({ address: engine, abi: bucketAbi, functionName: 'liabilityUsd' }),
-    publicClient.readContract({ address: engine, abi: bucketAbi, functionName: 'reserveUsd' }),
-    publicClient.readContract({ address: engine, abi: bucketAbi, functionName: 'mintHeadroomUsd' }),
     publicClient.readContract({
       address: token,
       abi: tokenAbi,
@@ -242,59 +310,141 @@ async function readBucket(
       functionName: 'rateWindowNonce',
       args: [currency],
     }),
+    publicClient.readContract({ address: engine, abi: bucketAbi, functionName: 'rateIsFresh' }),
+    publicClient.readContract({ address: engine, abi: bucketAbi, functionName: 'maxRateAge' }),
+    publicClient.readContract({ address: engine, abi: bucketAbi, functionName: 'pendingWithdrawal' }),
+    publicClient.readContract({
+      address: engine,
+      abi: bucketAbi,
+      functionName: 'RESERVE_WITHDRAWAL_DELAY_BLOCKS',
+    }),
+    // liabilityUsd now reverts on a missing rate with supply outstanding (R1-H5), and every
+    // liability-derived view reverts with it, so read them defensively.
+    safeRead<bigint | null>(
+      publicClient.readContract({ address: engine, abi: bucketAbi, functionName: 'liabilityUsd' }),
+      null,
+    ),
   ])
 
+  const liabilityUnavailable = liability === null
+  const [reserveUsd, mintHeadroomUsd, coverageRatioBps, withdrawableReserveUsd] = liabilityUnavailable
+    ? [0n, 0n, 0n, 0n]
+    : await Promise.all([
+        safeRead<bigint>(
+          publicClient.readContract({ address: engine, abi: bucketAbi, functionName: 'reserveUsd' }),
+          0n,
+        ),
+        safeRead<bigint>(
+          publicClient.readContract({ address: engine, abi: bucketAbi, functionName: 'mintHeadroomUsd' }),
+          0n,
+        ),
+        safeRead<bigint>(
+          publicClient.readContract({ address: engine, abi: bucketAbi, functionName: 'coverageRatioBps' }),
+          0n,
+        ),
+        safeRead<bigint>(
+          publicClient.readContract({
+            address: engine,
+            abi: bucketAbi,
+            functionName: 'withdrawableReserveUsd',
+          }),
+          0n,
+        ),
+      ])
+
+  const [pendingWithdrawalAmount, pendingWithdrawalBlock] = pending as readonly [bigint, bigint]
+
   return {
-    feeBps: Number(feeBps),
+    mintFeeBps: Number(mintFeeBps),
+    redeemFeeBps: Number(redeemFeeBps),
     accruedFees: accruedFees as bigint,
     vaultBalance: vaultBalance as bigint,
     collateralUsd: collateralUsd as bigint,
-    liabilityUsd: liabilityUsd as bigint,
-    reserveUsd: reserveUsd as bigint,
-    mintHeadroomUsd: mintHeadroomUsd as bigint,
+    liabilityUsd: liability ?? 0n,
+    reserveUsd,
+    mintHeadroomUsd,
+    coverageRatioBps,
+    withdrawableReserveUsd,
     tokenBalance: tokenBalance as bigint,
     tokenAllowance: tokenAllowance as bigint,
     ratePerUsd: ratePerUsd as bigint,
     rateWindowNonce: rateWindowNonce as bigint,
+    rateIsFresh: rateIsFresh as boolean,
+    maxRateAge: maxRateAge as bigint,
+    pendingWithdrawalAmount,
+    pendingWithdrawalBlock,
+    withdrawalDelayBlocks: withdrawalDelayBlocks as bigint,
+    liabilityUnavailable,
   }
 }
 
 async function readSettlement(
   publicClient: ReturnType<typeof useWallet>['publicClient'],
-  address: Address,
 ): Promise<SettlementState> {
   if (!hasSettlement()) return emptySettlement
 
   const settlement = deployments.settlement
-  const [phase, sessionId, feeBps, obligationsRaw, participantsRaw] = await Promise.all([
-    publicClient.readContract({ address: settlement, abi: settlementAbi, functionName: 'phase' }),
-    publicClient.readContract({ address: settlement, abi: settlementAbi, functionName: 'sessionId' }),
-    publicClient.readContract({ address: settlement, abi: settlementAbi, functionName: 'feeBps' }),
-    publicClient.readContract({
-      address: settlement,
-      abi: settlementAbi,
-      functionName: 'getObligations',
-    }),
-    publicClient.readContract({
-      address: settlement,
-      abi: settlementAbi,
-      functionName: 'participants',
-    }),
+  const read = (functionName: string, args: readonly unknown[] = []) =>
+    publicClient.readContract({ address: settlement, abi: settlementAbi, functionName, args })
+
+  const [phase, sessionIdRaw, nextFeeBps, fundingWindowBlocks, quarantineAddress] = await Promise.all([
+    read('phase'),
+    read('sessionId'),
+    read('feeBps'),
+    read('fundingWindowBlocks'),
+    read('quarantineAddress'),
+  ])
+
+  const sid = sessionIdRaw as bigint
+
+  const [
+    sessionFeeBps,
+    fundingDeadline,
+    obligationsRaw,
+    participantsRaw,
+    includedCount,
+    pendingAckCount,
+    counterpartyPairs,
+  ] = await Promise.all([
+    read('sessionFeeBps', [sid]),
+    read('fundingDeadline', [sid]),
+    read('getObligations', [sid]),
+    read('participants', [sid]),
+    read('includedCount', [sid]),
+    read('pendingAckCount', [sid]),
+    read('counterpartyPairs', [sid]),
   ])
 
   const participants = participantsRaw as Address[]
-  const obligations = (obligationsRaw as { debtor: Address; creditor: Address; currency: number; amount: bigint }[]).map(
-    (o) => ({
-      debtor: o.debtor,
-      creditor: o.creditor,
-      currency: Number(o.currency),
-      amount: o.amount as bigint,
-    }),
-  )
+  const obligations = (
+    obligationsRaw as {
+      debtor: Address
+      creditor: Address
+      currency: number
+      amount: bigint
+      ref: string
+      debtorAck: boolean
+      creditorAck: boolean
+      included: boolean
+      voided: boolean
+    }[]
+  ).map((o, index) => ({
+    index,
+    debtor: o.debtor,
+    creditor: o.creditor,
+    currency: Number(o.currency),
+    amount: o.amount,
+    ref: o.ref,
+    debtorAck: o.debtorAck,
+    creditorAck: o.creditorAck,
+    included: o.included,
+    voided: o.voided,
+  }))
 
   const escrow = emptyCurrencyRecord(0n)
-  const totalCreditor = emptyCurrencyRecord(0n)
-  const totalDebtor = emptyCurrencyRecord(0n)
+  const totalNets = emptyCurrencyRecord(0n)
+  const totalRequired = emptyCurrencyRecord(0n)
+  const shortfall = emptyCurrencyRecord(0n)
   const fullyFunded = emptyCurrencyRecord(false)
   const accruedFees = emptyCurrencyRecord(0n)
   const grossPosted = emptyCurrencyRecord(0n)
@@ -303,53 +453,20 @@ async function readSettlement(
   await Promise.all(
     SETTLEMENT_CURRENCIES.map(async (id) => {
       const c = CURRENCY[id]
-      const [esc, cred, debt, funded, fees, gross, elim] = await Promise.all([
-        publicClient.readContract({
-          address: settlement,
-          abi: settlementAbi,
-          functionName: 'escrowBalance',
-          args: [c],
-        }),
-        publicClient.readContract({
-          address: settlement,
-          abi: settlementAbi,
-          functionName: 'totalCreditorNets',
-          args: [c],
-        }),
-        publicClient.readContract({
-          address: settlement,
-          abi: settlementAbi,
-          functionName: 'totalDebtorNets',
-          args: [c],
-        }),
-        publicClient.readContract({
-          address: settlement,
-          abi: settlementAbi,
-          functionName: 'currencyFullyFunded',
-          args: [c],
-        }),
-        publicClient.readContract({
-          address: settlement,
-          abi: settlementAbi,
-          functionName: 'accruedFees',
-          args: [c],
-        }),
-        publicClient.readContract({
-          address: settlement,
-          abi: settlementAbi,
-          functionName: 'grossPosted',
-          args: [c],
-        }),
-        publicClient.readContract({
-          address: settlement,
-          abi: settlementAbi,
-          functionName: 'eliminated',
-          args: [c],
-        }),
+      const [esc, nets, required, short, funded, fees, gross, elim] = await Promise.all([
+        read('escrowBalance', [sid, c]),
+        read('totalCreditorNets', [sid, c]),
+        read('totalRequired', [sid, c]),
+        read('fundingShortfall', [sid, c]),
+        read('currencyFullyFunded', [sid, c]),
+        read('accruedFees', [c]),
+        read('grossPosted', [sid, c]),
+        read('eliminated', [sid, c]),
       ])
       escrow[id] = esc as bigint
-      totalCreditor[id] = cred as bigint
-      totalDebtor[id] = debt as bigint
+      totalNets[id] = nets as bigint
+      totalRequired[id] = required as bigint
+      shortfall[id] = short as bigint
       fullyFunded[id] = funded as boolean
       accruedFees[id] = fees as bigint
       grossPosted[id] = gross as bigint
@@ -360,78 +477,53 @@ async function readSettlement(
   const partyNets: PartyNetRow[] = await Promise.all(
     participants.map(async (party) => {
       const nets = emptyCurrencyRecord(0n)
-      const funded = emptyCurrencyRecord(false)
+      const required = emptyCurrencyRecord(0n)
+      const deposited = emptyCurrencyRecord(0n)
+      const outstanding = emptyCurrencyRecord(0n)
       const claimed = emptyCurrencyRecord(false)
       await Promise.all(
         SETTLEMENT_CURRENCIES.map(async (id) => {
           const c = CURRENCY[id]
-          const [n, f, cl] = await Promise.all([
-            publicClient.readContract({
-              address: settlement,
-              abi: settlementAbi,
-              functionName: 'netOf',
-              args: [party, c],
-            }),
-            publicClient.readContract({
-              address: settlement,
-              abi: settlementAbi,
-              functionName: 'fundedOf',
-              args: [party, c],
-            }),
-            publicClient.readContract({
-              address: settlement,
-              abi: settlementAbi,
-              functionName: 'claimedOf',
-              args: [party, c],
-            }),
+          const [n, req, dep, cl] = await Promise.all([
+            read('netOf', [sid, party, c]),
+            read('requiredDeposit', [sid, party, c]),
+            read('depositedOf', [sid, party, c]),
+            read('claimedOf', [sid, party, c]),
           ])
           nets[id] = n as bigint
-          funded[id] = f as boolean
+          required[id] = req as bigint
+          deposited[id] = dep as bigint
+          const gap = (req as bigint) - (dep as bigint)
+          outstanding[id] = gap > 0n ? gap : 0n
           claimed[id] = cl as boolean
         }),
       )
-      return { party, nets, funded, claimed }
+      return { party, nets, required, deposited, outstanding, claimed }
     }),
   )
 
-  const [usdAllowanceSettlement, clpAllowanceSettlement, arsAllowanceSettlement] = await Promise.all([
-    publicClient.readContract({
-      address: deployments.usd,
-      abi: usdAbi,
-      functionName: 'allowance',
-      args: [address, settlement],
-    }),
-    publicClient.readContract({
-      address: deployments.buckets.clp.token,
-      abi: tokenAbi,
-      functionName: 'allowance',
-      args: [address, settlement],
-    }),
-    publicClient.readContract({
-      address: deployments.buckets.ars.token,
-      abi: tokenAbi,
-      functionName: 'allowance',
-      args: [address, settlement],
-    }),
-  ])
-
   return {
     phase: Number(phase),
-    sessionId: sessionId as bigint,
-    feeBps: Number(feeBps),
+    sessionId: sid,
+    sessionFeeBps: Number(sessionFeeBps),
+    nextFeeBps: Number(nextFeeBps),
+    fundingDeadline: fundingDeadline as bigint,
+    fundingWindowBlocks: fundingWindowBlocks as bigint,
     obligations,
     participants,
     partyNets,
+    includedCount: includedCount as bigint,
+    pendingAckCount: pendingAckCount as bigint,
+    counterpartyPairs: counterpartyPairs as bigint,
     escrow,
-    totalCreditor,
-    totalDebtor,
+    totalNets,
+    totalRequired,
+    shortfall,
     fullyFunded,
     accruedFees,
     grossPosted,
     eliminated,
-    usdAllowanceSettlement: usdAllowanceSettlement as bigint,
-    clpAllowanceSettlement: clpAllowanceSettlement as bigint,
-    arsAllowanceSettlement: arsAllowanceSettlement as bigint,
+    quarantineAddress: quarantineAddress as Address,
   }
 }
 
@@ -548,7 +640,7 @@ export function useProtocolController() {
         publicClient.getBlockNumber(),
         readBucket(publicClient, 'clp', address),
         readBucket(publicClient, 'ars', address),
-        readSettlement(publicClient, address),
+        readSettlement(publicClient),
       ])
 
       setState({
@@ -695,25 +787,34 @@ export function useProtocolController() {
     [run, walletClient],
   )
 
-  const approveSettlementToken = useCallback(
-    (currency: SettlementCurrency) => {
-      const max = parseEther('1000000000')
-      if (currency === 'usd') {
-        return writeUsd('approve', [deployments.settlement, max])
+  /// Approve only what this action needs, rather than a blanket allowance to upgradeable code.
+  const ensureSettlementAllowance = useCallback(
+    async (currency: SettlementCurrency, amount: bigint) => {
+      const isUsd = currency === 'usd'
+      const tokenAddress = isUsd ? deployments.usd : deployments.buckets[currency].token
+      const abi = isUsd ? usdAbi : tokenAbi
+      const current = (await publicClient.readContract({
+        address: tokenAddress,
+        abi,
+        functionName: 'allowance',
+        args: [address, deployments.settlement],
+      })) as bigint
+      if (current >= amount) return
+      if (isUsd) {
+        await writeUsd('approve', [deployments.settlement, amount])
+      } else {
+        await writeToken(currency, 'approve', [deployments.settlement, amount])
       }
-      return writeToken(currency, 'approve', [deployments.settlement, max])
     },
-    [writeUsd, writeToken],
+    [address, publicClient, writeUsd, writeToken],
   )
 
   const active = state.buckets[activeBucket]
 
-  /// Mint/redeem require a non-zero rate stamped with the current hub window nonce.
+  /// Mint/redeem require a non-zero rate stamped with the current hub window nonce, and now also
+  /// a rate no older than the bucket's maxRateAge (R1-H5).
   const rateValid = useCallback(
-    (bucket: BucketId) => {
-      const b = state.buckets[bucket]
-      return b.ratePerUsd !== 0n && b.rateWindowNonce === state.windowNonce
-    },
+    (bucket: BucketId) => state.buckets[bucket].rateIsFresh,
     [state],
   )
 
@@ -734,6 +835,8 @@ export function useProtocolController() {
     refresh,
     formatEth: formatEther,
     parseEth: parseEther,
+
+    // --- USD / hub admin ---
     mintUsd: (to: Address, amount: string) => writeUsd('mint', [to, parseEther(amount)]),
     openWindow: () => writeHub('openWindow'),
     closeWindow: () => writeHub('closeWindow'),
@@ -741,14 +844,27 @@ export function useProtocolController() {
     unpause: () => writeHub('unpause'),
     setAllowlist: (account: Address, allowed: boolean) =>
       writeHub('setAllowlist', [account, allowed]),
-    setFeeBps: (bps: number, bucket: BucketId = activeBucket) =>
-      writeBucket(bucket, 'setFeeBps', [bps]),
+    setMinWindowBlocks: (blocks: string) => writeHub('setMinWindowBlocks', [BigInt(blocks)]),
+
+    // --- bucket admin ---
+    setMintFeeBps: (bps: number, bucket: BucketId = activeBucket) =>
+      writeBucket(bucket, 'setMintFeeBps', [bps]),
+    setRedeemFeeBps: (bps: number, bucket: BucketId = activeBucket) =>
+      writeBucket(bucket, 'setRedeemFeeBps', [bps]),
+    setMaxRateAge: (seconds: string, bucket: BucketId = activeBucket) =>
+      writeBucket(bucket, 'setMaxRateAge', [BigInt(seconds)]),
     depositReserve: (amount: string, bucket: BucketId = activeBucket) =>
       writeBucket(bucket, 'depositReserve', [parseEther(amount)]),
-    withdrawReserve: (amount: string, bucket: BucketId = activeBucket) =>
-      writeBucket(bucket, 'withdrawReserve', [parseEther(amount)]),
+    requestReserveWithdrawal: (amount: string, bucket: BucketId = activeBucket) =>
+      writeBucket(bucket, 'requestReserveWithdrawal', [parseEther(amount)]),
+    executeReserveWithdrawal: (bucket: BucketId = activeBucket) =>
+      writeBucket(bucket, 'executeReserveWithdrawal'),
+    cancelReserveWithdrawal: (bucket: BucketId = activeBucket) =>
+      writeBucket(bucket, 'cancelReserveWithdrawal'),
     withdrawFees: (amount: string, bucket: BucketId = activeBucket) =>
       writeBucket(bucket, 'withdrawFees', [parseEther(amount)]),
+
+    // --- inventory ---
     mint: (amount: string, bucket: BucketId = activeBucket) =>
       writeBucket(bucket, 'mint', [parseEther(amount)]),
     redeem: (amount: string, bucket: BucketId = activeBucket) =>
@@ -767,26 +883,52 @@ export function useProtocolController() {
       if (token === 'usd') return writeUsd('transfer', [to, value])
       return writeToken(token, 'transfer', [to, value])
     },
+
+    // --- settlement lifecycle ---
     openSettlementSession: () => writeSettlement('openSession'),
-    lockSettlementSession: () => writeSettlement('lockSession'),
+    freezeSettlementSession: () => writeSettlement('freezeSession'),
     cancelSettlementSession: () => writeSettlement('cancelSession'),
+    declareSettlementFailure: (sessionId: bigint) => writeSettlement('declareFailure', [sessionId]),
+
+    // --- obligation book ---
     postObligation: (
       debtor: Address,
       creditor: Address,
       currency: SettlementCurrency,
       amount: string,
+      ref: string,
     ) =>
       writeSettlement('postObligation', [
         debtor,
         creditor,
         CURRENCY[currency],
         parseEther(amount),
+        refToBytes32(ref),
       ]),
-    fundSettlement: (currency: SettlementCurrency) =>
-      approveSettlementToken(currency).then(() => writeSettlement('fund', [CURRENCY[currency]])),
-    claimSettlement: (currency: SettlementCurrency) =>
-      writeSettlement('claim', [CURRENCY[currency]]),
+    acknowledgeObligations: (indices: number[]) =>
+      writeSettlement('acknowledge', [indices.map((i) => BigInt(i))]),
+    voidObligation: (index: number) => writeSettlement('voidObligation', [BigInt(index)]),
+
+    // --- settlement funding ---
+    depositSettlement: async (currency: SettlementCurrency, amount: string) => {
+      const value = parseEther(amount)
+      await ensureSettlementAllowance(currency, value)
+      return writeSettlement('deposit', [CURRENCY[currency], value])
+    },
+    withdrawSettlementDeposit: (sessionId: bigint, currency: SettlementCurrency) =>
+      writeSettlement('withdrawDeposit', [sessionId, CURRENCY[currency]]),
+    claimSettlement: (sessionId: bigint, currency: SettlementCurrency) =>
+      writeSettlement('claim', [sessionId, CURRENCY[currency]]),
+
+    // --- settlement admin ---
     setSettlementFeeBps: (bps: number) => writeSettlement('setFeeBps', [bps]),
+    setSettlementFundingWindow: (blocks: string) =>
+      writeSettlement('setFundingWindowBlocks', [BigInt(blocks)]),
+    setSettlementMaxNet: (party: Address, currency: SettlementCurrency, max: string) =>
+      writeSettlement('setMaxNet', [party, CURRENCY[currency], parseEther(max)]),
+    setQuarantineAddress: (account: Address) => writeSettlement('setQuarantineAddress', [account]),
+    sweepQuarantined: (sessionId: bigint, party: Address, currency: SettlementCurrency) =>
+      writeSettlement('sweepQuarantined', [sessionId, party, CURRENCY[currency]]),
     withdrawSettlementFees: (currency: SettlementCurrency, amount: string) =>
       writeSettlement('withdrawFees', [CURRENCY[currency], parseEther(amount)]),
   }

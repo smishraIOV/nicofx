@@ -5,6 +5,7 @@ interface IOracle {
     function ratePerUsd(uint8 currency) external view returns (uint256);
     function rateWindowNonce(uint8 currency) external view returns (uint256);
     function lastUpdated(uint8 currency) external view returns (uint256);
+    function canSetRate(uint8 currency) external view returns (bool);
     function clpPerUsd() external view returns (uint256);
     function arsPerUsd() external view returns (uint256);
 }

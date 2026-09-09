@@ -12,6 +12,7 @@ contract ProtocolHub is Initializable, AccessControlUpgradeable, PausableUpgrade
 
     uint256 public constant WITHDRAWAL_WINDOW_BLOCKS = 100;
     uint256 public constant DEFAULT_WINDOW_DURATION_BLOCKS = 200;
+    uint256 public constant DEFAULT_MIN_WINDOW_BLOCKS = 50;
 
     /// @dev True after open until early close (stays true after auto-expiry until next open/close cycle)
     bool private _windowArmed;
@@ -22,6 +23,12 @@ contract ProtocolHub is Initializable, AccessControlUpgradeable, PausableUpgrade
     uint256 public windowDurationBlocks;
     /// @notice Block when MRW was closed early; 0 if closed only by expiry (or never closed)
     uint256 public withdrawalWindowStart;
+    /// @notice Block the current MRW opened on
+    uint256 public windowStartBlock;
+    /// @notice Minimum blocks an MRW must stay open before it may be closed early.
+    /// @dev Without this the reserve withdrawal window was not a real constraint (review R1-M1): the hub
+    ///      admin could open and immediately close a window to unlock `withdrawReserve` on demand.
+    uint256 public minWindowBlocks;
 
     mapping(address => bool) public allowlist;
     address[] private _allowlistedAccounts;
@@ -31,12 +38,14 @@ contract ProtocolHub is Initializable, AccessControlUpgradeable, PausableUpgrade
     event WindowOpened(uint256 indexed windowNonce, uint256 endBlock, uint256 durationBlocks);
     event WindowClosed(uint256 indexed windowNonce, uint256 withdrawalWindowStart);
     event WindowDurationUpdated(uint256 durationBlocks);
+    event MinWindowBlocksUpdated(uint256 minWindowBlocks);
     event AllowlistUpdated(address indexed account, bool allowed);
 
     error ZeroAddress();
     error WindowAlreadyOpen();
     error WindowAlreadyClosed();
     error InvalidWindowDuration();
+    error MinWindowNotElapsed(uint256 closableFromBlock);
 
     /// @custom:oz-upgrades-unsafe-allow constructor
     constructor() {
@@ -50,6 +59,7 @@ contract ProtocolHub is Initializable, AccessControlUpgradeable, PausableUpgrade
         __Pausable_init();
 
         windowDurationBlocks = DEFAULT_WINDOW_DURATION_BLOCKS;
+        minWindowBlocks = DEFAULT_MIN_WINDOW_BLOCKS;
 
         _grantRole(DEFAULT_ADMIN_ROLE, admin);
         _grantRole(HUB_ADMIN_ROLE, admin);
@@ -83,6 +93,7 @@ contract ProtocolHub is Initializable, AccessControlUpgradeable, PausableUpgrade
 
         _windowArmed = true;
         withdrawalWindowStart = 0; // cancel any active withdrawal window
+        windowStartBlock = block.number;
         windowEndBlock = block.number + windowDurationBlocks;
         unchecked {
             ++windowNonce;
@@ -91,8 +102,12 @@ contract ProtocolHub is Initializable, AccessControlUpgradeable, PausableUpgrade
     }
 
     /// @notice Early close; also allowed path before auto-expiry. Starts reserve withdrawal window.
+    /// @dev Enforces `minWindowBlocks` so an MRW cannot be opened and closed in quick succession
+    ///      purely to unlock reserve withdrawals (R1-M1).
     function closeWindow() external onlyRole(HUB_ADMIN_ROLE) {
         if (!windowOpen()) revert WindowAlreadyClosed();
+        uint256 closableFrom = windowStartBlock + minWindowBlocks;
+        if (block.number < closableFrom) revert MinWindowNotElapsed(closableFrom);
         _windowArmed = false;
         withdrawalWindowStart = block.number;
         emit WindowClosed(windowNonce, withdrawalWindowStart);
@@ -100,8 +115,21 @@ contract ProtocolHub is Initializable, AccessControlUpgradeable, PausableUpgrade
 
     function setWindowDurationBlocks(uint256 durationBlocks) external onlyRole(HUB_ADMIN_ROLE) {
         if (durationBlocks == 0) revert InvalidWindowDuration();
+        if (durationBlocks < minWindowBlocks) revert InvalidWindowDuration();
         windowDurationBlocks = durationBlocks;
         emit WindowDurationUpdated(durationBlocks);
+    }
+
+    function setMinWindowBlocks(uint256 minWindowBlocks_) external onlyRole(HUB_ADMIN_ROLE) {
+        if (minWindowBlocks_ == 0 || minWindowBlocks_ > windowDurationBlocks) revert InvalidWindowDuration();
+        minWindowBlocks = minWindowBlocks_;
+        emit MinWindowBlocksUpdated(minWindowBlocks_);
+    }
+
+    /// @notice Block from which the current MRW may be closed early; 0 when no window is open
+    function windowClosableFromBlock() external view returns (uint256) {
+        if (!windowOpen()) return 0;
+        return windowStartBlock + minWindowBlocks;
     }
 
     function withdrawalWindowActive() public view returns (bool) {
@@ -119,10 +147,10 @@ contract ProtocolHub is Initializable, AccessControlUpgradeable, PausableUpgrade
         return block.number <= start + WITHDRAWAL_WINDOW_BLOCKS;
     }
 
-    /// @notice Blocks remaining in the active MRW; 0 if closed/expired
+    /// @notice Blocks remaining in the active MRW, inclusive of the end block; 0 if closed/expired
     function windowBlocksRemaining() public view returns (uint256) {
         if (!windowOpen()) return 0;
-        return windowEndBlock - block.number;
+        return windowEndBlock - block.number + 1;
     }
 
     /// @notice Blocks remaining in the post-MRW reserve withdrawal window; 0 if inactive
