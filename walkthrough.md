@@ -3,6 +3,9 @@
 A hands-on tour of the local dApp: set up inventory in **both** currencies, settle a multilateral
 session delivery-versus-payment, then deliberately break things to see the safety rails.
 
+This assumes you have already set up the local environment as described in the
+[main readme](./readme.md#quick-start).
+
 Numbers here are asserted by `test/Walkthrough.t.sol`, so they cannot drift from what the contracts do.
 
 - [Setup — three terminals](#setup--three-terminals)
