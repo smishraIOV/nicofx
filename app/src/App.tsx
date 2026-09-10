@@ -146,7 +146,7 @@ function TxStrip() {
                 <span className="tx-time">{new Date(tx.at).toLocaleTimeString()}</span>
               </div>
               <div className="tx-detail">{tx.detail}</div>
-              {tx.hash && (
+              {tx.hash ? (
                 <div className="tx-hash-row">
                   <code className="tx-hash" title={tx.hash}>
                     {tx.hash.slice(0, 10)}…{tx.hash.slice(-8)}
@@ -158,7 +158,33 @@ function TxStrip() {
                   >
                     Copy hash
                   </button>
+                  {tx.status === 'fail' && (
+                    <button
+                      type="button"
+                      className="ghost-sm"
+                      onClick={() => void copyText(`${tx.label}: ${tx.detail}`)}
+                    >
+                      Copy error
+                    </button>
+                  )}
                 </div>
+              ) : (
+                tx.status === 'fail' && (
+                  <div className="tx-hash-row">
+                    {/* No hash exists: the call reverted in pre-flight simulation, so nothing was
+                        broadcast. Say so rather than leaving a blank where the hash would be. */}
+                    <code className="tx-hash" title="Rejected before broadcast — no transaction was submitted, so there is no hash to inspect">
+                      no hash — rejected before broadcast
+                    </code>
+                    <button
+                      type="button"
+                      className="ghost-sm"
+                      onClick={() => void copyText(`${tx.label}: ${tx.detail}`)}
+                    >
+                      Copy error
+                    </button>
+                  </div>
+                )
               )}
             </li>
           ))}
@@ -256,6 +282,10 @@ function AdminPanel() {
   const [mintFeeBps, setMintFeeBps] = useState(String(p.active.mintFeeBps || 25))
   const [redeemFeeBps, setRedeemFeeBps] = useState(String(p.active.redeemFeeBps || 50))
   const [allowAddr, setAllowAddr] = useState<string>(ANVIL_ACCOUNTS[2].address)
+  // Which field the allowlist picker writes to. `mintTo` is seeded from the connected account and
+  // does not follow account switches, so without a visible target it silently mints to whoever
+  // was connected when this panel mounted.
+  const [adminPicking, setAdminPicking] = useState<'mintTo' | 'allowlist'>('allowlist')
   const [feeWithdraw, setFeeWithdraw] = useState('1')
   const [settlementFeeBps, setSettlementFeeBps] = useState(String(p.state.settlement.nextFeeBps || 50))
   const [fundingWindow, setFundingWindow] = useState(String(p.state.settlement.fundingWindowBlocks || 200n))
@@ -283,8 +313,23 @@ function AdminPanel() {
       <p className="hint">MRW and pause are shared across CLP and ARS. Reserves and fees are per bucket.</p>
 
       <div className="allowlist-box">
-        <h3>Allowlist</h3>
-        <AllowlistList onPick={(addr) => setAllowAddr(addr)} />
+        <h3>
+          Allowlist{' '}
+          <button
+            type="button"
+            className="ghost-sm"
+            onClick={() => setAdminPicking('allowlist')}
+          >
+            → allowlist target
+          </button>{' '}
+          <button type="button" className="ghost-sm" onClick={() => setAdminPicking('mintTo')}>
+            → USD mint recipient
+          </button>
+          <span className="hint"> (Use writes to: {adminPicking === 'mintTo' ? 'mint recipient' : 'allowlist target'})</span>
+        </h3>
+        <AllowlistList
+          onPick={(addr) => (adminPicking === 'mintTo' ? setMintTo(addr) : setAllowAddr(addr))}
+        />
       </div>
 
       <form
@@ -295,14 +340,18 @@ function AdminPanel() {
           void p.mintUsd(mintTo as Address, mintAmt)
         }}
       >
-        <Field label="Mint USD to">
+        <Field
+          label={`Mint USD to${
+            mintTo.toLowerCase() === address.toLowerCase() ? ' (this is YOUR own account)' : ''
+          }`}
+        >
           <input value={mintTo} onChange={(e) => setMintTo(e.target.value)} />
         </Field>
         <Field label="Amount">
           <input value={mintAmt} onChange={(e) => setMintAmt(e.target.value)} />
         </Field>
-        <button type="submit" disabled={p.busy}>
-          Mint USD
+        <button type="submit" disabled={p.busy || !isAddress(mintTo)}>
+          Mint USD → {isAddress(mintTo) ? short(mintTo) : 'invalid address'}
         </button>
       </form>
 

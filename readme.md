@@ -13,6 +13,9 @@ See [`reviews/`](./reviews/) for the standing critical reviews. The current one 
 which remain open. Findings are cited in code and tests as `R1-<id>` — see
 [reviews/README.md](./reviews/README.md).
 
+**New here?** [walkthrough.md](./walkthrough.md) is a self-guided tour of the local dApp — three
+terminals, a full CLP + ARS settlement session, then the failure paths.
+
 ## Goals
 
 - Multilateral **obligation book** and session netting, settled **delivery-versus-payment** (this is the primary product)
@@ -252,11 +255,12 @@ nicofx/
   foundry.toml
   src/           USD, ProtocolHub, Oracle, SettlementToken, CurrencyBucket, NettingSession, Currency
   script/        Deploy.s.sol
-  test/          CurrencyBucket.t.sol, NettingSession.t.sol, PricingAndReserves.t.sol
+  test/          CurrencyBucket.t.sol, NettingSession.t.sol, PricingAndReserves.t.sol,
+                 Walkthrough.t.sol
   app/           Vite + React dApp (FX Net)
   scripts/       oracle-feeder.mjs, sync-abis.sh
   reviews/       R<n>-<commit>.md critical reviews + README (citation convention)
-  readme.md, devaluation-risk.md, ideation.md
+  readme.md, walkthrough.md, devaluation-risk.md, ideation.md
 ```
 
 ### Setup
@@ -294,11 +298,19 @@ After changing a contract interface, refresh the dApp's ABIs:
 ./scripts/sync-abis.sh
 ```
 
-Suggested smoke path (settlement-first):
+### Walkthrough
 
-1. **Admin / User** — mint USD and (via MRW) mint some CLP/ARS inventory; give **#2 ≥ 90.45 CLP**
-2. **Settle** — run the [example graph](#example-graph-anvil-2--3--4) (open → post three rows → acknowledge → freeze → deposit → claim)
-3. (Optional) Admin MRW / oracle / redeem flows for convertibility testing
+[walkthrough.md](./walkthrough.md) is the guided version of the above: three terminals, reserves and
+inventory in **both** currencies, a session with CLP and ARS legs settled delivery-versus-payment, then
+eight failure paths with their expected errors. Its numbers are asserted by `test/Walkthrough.t.sol`.
+
+Short version if you just want the settlement flow:
+
+1. **Admin / Oracle** — Open MRW, post **both** rates, deposit reserve into **each** bucket (the vaults
+   are isolated), mint inventory
+2. **Settle** — run the [example graph](#example-graph-anvil-2--3--4) (open → post → acknowledge →
+   freeze → deposit → claim)
+3. (Optional) redeem flows for convertibility testing
 
 ## Test focus
 
@@ -315,4 +327,5 @@ Suggested smoke path (settlement-first):
 - NettingSession: net caps, quarantine sweep, escrow reporting, past-session claims after a new session opens
 - Invariants: per-currency nets sum to zero; escrow always covers open claims
 - O(1) scaling of `openSession` and `freezeSession`
+- Walkthrough: the exact figures quoted in walkthrough.md, so the doc cannot drift
 - UUPS upgrade smoke on USD

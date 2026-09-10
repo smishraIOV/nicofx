@@ -679,16 +679,23 @@ export function useProtocolController() {
       setBusy(true)
       const id = pushTx({ label, status: 'pending', detail: 'sending…' })
       try {
+        // viem simulates before broadcasting, so a failing call usually throws here and no
+        // transaction is ever submitted — there is no hash to show for those. A hash only exists
+        // once the node has accepted the transaction.
         const hash = await fn()
         patchTx(id, { hash, detail: 'waiting for receipt…' })
         const receipt = await publicClient.waitForTransactionReceipt({ hash })
         if (receipt.status === 'reverted') {
-          patchTx(id, { status: 'fail', detail: 'transaction reverted on-chain' })
+          patchTx(id, {
+            status: 'fail',
+            detail: `reverted on-chain · block ${receipt.blockNumber}`,
+          })
         } else {
           patchTx(id, { status: 'ok', detail: `confirmed · block ${receipt.blockNumber}` })
         }
         await refresh()
       } catch (e) {
+        // Keep whatever hash the entry already has: a receipt-stage failure is still inspectable.
         patchTx(id, { status: 'fail', detail: formatTxError(e) })
       } finally {
         setBusy(false)
