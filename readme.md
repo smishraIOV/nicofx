@@ -1,31 +1,83 @@
 # FX Net — Permissioned Multicurrency FX Settlement (experimental)
 
-Permissioned, crypto-collateralized FX settlement network. Settlement tokens (**CLP**, **ARS**) are each backed by an **isolated USD vault**, sharing one allowlist and one mint/redeem window calendar.
+A permissioned, crypto-collateralized FX settlement network. The product is a **multilateral
+obligation book**: participants post what they owe each other, the book is netted, and only the
+residual moves — settled delivery-versus-payment, so nothing is discharged until everything is
+deliverable.
 
-Tokens are not meant for retail use — only allowlisted enterprise addresses may mint or redeem. Transfers, however, of USD / CLP / ARS are unrestricted.
+Settlement inventory is **CLP** and **ARS** ERC20s, each backed by its own isolated **USD** vault.
+Only allowlisted enterprise addresses may mint or redeem; token transfers are currently unrestricted.
 
-> **Assumption:** For simplicity, the **USD** token is always treated at par with the US dollar (1 USD token = 1 USD). The protocol does not price USD against fiat, haircut it, or model depeg risk. This will not be acceptable in a production setting.
+> **▸ Want to just run it?** [**walkthrough.md**](./walkthrough.md) is a self-guided tour — three
+> terminals, a full CLP + ARS settlement session, then eight failure paths with their expected errors.
+> Start there and come back for the detail.
 >
-> **FX risk** is per bucket: an adverse CLP or ARS move can exhaust that bucket's 10% buffer. v1 handles shortfall with a redemption race (proportional burn). See [devaluation-risk.md](./devaluation-risk.md).
+> **▸ Want the critique?** [**reviews/**](./reviews/) holds the standing critical reviews. The current
+> one is [R1](./reviews/R1-cb95b96.md), which records what is fixed and what is still open. Findings
+> are cited in code and tests as `R1-<id>` — see [reviews/README.md](./reviews/README.md).
 
-See [`reviews/`](./reviews/) for the standing critical reviews. The current one is
-[R1](./reviews/R1-cb95b96.md) (reviewed at `cb95b96`), including which findings are addressed here and
-which remain open. Findings are cited in code and tests as `R1-<id>` — see
-[reviews/README.md](./reviews/README.md).
+**Contents** · [Quick start](#quick-start) · [What it does](#what-it-does) ·
+[Architecture](#architecture) · [Who can do what](#who-can-do-what) ·
+[Settlement](#settlement-the-obligation-book) · [Inventory](#inventory-buckets-rates-and-fees) ·
+[Operations](#operations) · [Limitations](#limitations) · [Reference](#reference)
 
-**New here?** [walkthrough.md](./walkthrough.md) is a self-guided tour of the local dApp — three
-terminals, a full CLP + ARS settlement session, then the failure paths.
+---
 
-## Goals
+## Quick start
 
-- Multilateral **obligation book** and session netting, settled **delivery-versus-payment** (this is the primary product)
-- Mint **CLP** and **ARS** as ERC20 settlement inventory, each backed by an isolated **USD** vault
-- Shared admin-controlled mint/redeem window (MRW) and allowlist via `ProtocolHub`
-- Shared trusted oracle posting per-currency rates, **one rate per currency per window**, bounded by a max deviation
-- 110% collateralization per bucket (10% admin buffer. provided by protocol operator for each bucket)
-- **Two-way pricing:** protocol fee (bps) on both mint and redeem per bucket, plus a settlement fee on netting sessions
-- dApp (FX Net): Settle / Admin / Oracle / User
-- Local stack: Foundry (`forge`, `cast`, `anvil`)
+**Requirements:** [Foundry](https://book.getfoundry.sh/getting-started/installation) and
+[Node.js](https://nodejs.org/) 18+.
+
+```bash
+git clone --recurse-submodules <repo-url>
+cd nicofx                     # or: git submodule update --init --recursive
+forge test
+```
+
+Then three terminals:
+
+```bash
+anvil                                                                    # 1 — chain
+
+forge script script/Deploy.s.sol --rpc-url http://127.0.0.1:8545 \
+  --broadcast                                                            # 2 — deploy
+
+cd app && npm install && npm run dev                                     # 3 — dApp
+```
+
+Deploying writes `app/src/contracts/deployments.json`, which the dApp reads. Optional fourth terminal
+feeds live FX rates (MRW must be open, one post per currency per window):
+
+```bash
+node scripts/oracle-feeder.mjs --once
+```
+
+After changing a contract interface, refresh the dApp's ABIs with `./scripts/sync-abis.sh`.
+
+The dApp has four views:
+
+| View | Actions |
+|------|---------|
+| **Settle** | Open/freeze/cancel session; declare failure; post obligations with a reference; acknowledge or void rows; view nets, deposits and shortfalls; deposit, withdraw a deposit, claim |
+| **Admin** | Shared MRW/pause/allowlist; mint USD; per-bucket reserve and timelocked withdrawal; mint and redeem fees; settlement fee and funding window |
+| **Oracle** | Post CLP and ARS rates |
+| **User** | Mint/redeem inventory; transfer USD/CLP/ARS; pick/copy allowlisted recipients |
+
+**[walkthrough.md](./walkthrough.md) drives all of this step by step** — its figures are asserted by
+`test/Walkthrough.t.sol`, so they cannot drift from what the contracts do.
+
+## What it does
+
+- **Multilateral netting, settled DVP.** The primary product. A book of obligations nets to residuals;
+  obligations are discharged only once every currency in the session is fully funded.
+- **Two-sided consent.** An obligation nets only after both parties acknowledge it, and carries an
+  external invoice reference that cannot be reused once discharged.
+- **Convertible inventory.** CLP and ARS mint against USD at an oracle rate, each from an isolated
+  vault held at 110% collateralization, inside a shared mint/redeem window.
+- **Two-way pricing.** Fees on both mint and redeem, plus a settlement fee funded by debtors so
+  creditors are paid at face value.
+
+Local stack is Foundry (`forge`, `cast`, `anvil`) plus a Vite/React dApp.
 
 ## Architecture
 
@@ -38,20 +90,41 @@ terminals, a full CLP + ARS settlement session, then the failure paths.
 | `CurrencyBucket` | Isolated USD vault, mint/redeem, two-way fees, timelocked reserve exit |
 | `NettingSession` | Multilateral obligation book with two-sided consent; DVP settlement via escrow |
 
-Upgradeability: UUPS for `USD`, `ProtocolHub`, `SettlementToken`, `CurrencyBucket`, `NettingSession`. Oracle is non-upgradeable.
-
 ```text
 ProtocolHub ──allowlist + pause──► buckets + oracle + NettingSession
-USD / CLP / ARS ──inventory transfers──► NettingSession escrow
-USD ──collateral──► CurrencyBucket(CLP|ARS) ──► SettlementToken
 Oracle ──clpPerUsd / arsPerUsd──► buckets
+USD ──collateral──► CurrencyBucket(CLP|ARS) ──mint/burn──► SettlementToken
+USD / CLP / ARS ──inventory transfers──► NettingSession escrow
 ```
 
-**Isolation:** ARS redemptions cannot spend CLP vault USD (and vice versa). Netting is separate from mint/redeem.
+**Isolation:** ARS redemptions cannot spend CLP vault USD, and vice versa. Netting is entirely separate
+from mint/redeem — a session never reads the oracle.
 
-### Multilateral settlement (obligation book)
+**Upgradeability:** UUPS for `USD`, `ProtocolHub`, `SettlementToken`, `CurrencyBucket` and
+`NettingSession`. `Oracle` is non-upgradeable.
 
-Primary product flow (independent of MRW):
+## Who can do what
+
+| Role | Capabilities |
+|------|----------------|
+| **USD_Admin** | Mint USD |
+| **Hub_Admin** | Open/close MRW; set window duration and minimum length; pause/unpause; manage the shared allowlist |
+| **Bucket_Admin** | Per-bucket deposit reserve; request/execute/cancel reserve withdrawal; set mint and redeem fees; set max rate age; withdraw bucket fees; upgrade that bucket/token |
+| **Session_Admin** | Open/freeze/cancel session; declare failure early; set session fee, funding window, net caps and quarantine address; sweep quarantined claims; withdraw settlement fees; upgrade NettingSession |
+| **Trusted_Oracle** | Post CLP and ARS rates (MRW open, hub not paused, once per window, within the deviation bound) |
+| **Oracle owner** | Rotate the trusted oracle, set the deviation bound, `forceSetRate` for a genuine large move |
+| **Users** | Allowlisted: mint/redeem in an open MRW, and post/acknowledge/deposit/claim in a session. Anyone: transfer tokens |
+
+**Allowlist.** One shared, enumerable allowlist on the hub gates minting, redeeming and being named in
+an obligation. Token transfers are **unrestricted**, so inventory can leave the permissioned set —
+those holders can move tokens but cannot mint, redeem or settle.
+
+Locally: Anvil account 0 holds every admin role, 1 is the oracle, 2–4 are allowlisted users. The dApp's
+labels are off by one — `User1` is account #2.
+
+## Settlement: the obligation book
+
+The primary product, and independent of the mint/redeem window.
 
 ```text
 Idle → Open      post obligations, counterparties acknowledge
@@ -61,56 +134,121 @@ Idle → Open      post obligations, counterparties acknowledge
                  obligations discharged, creditor claims open
      → Settled   every creditor claim taken
 
-     Frozen/Open → Cancelled   admin abandons; deposits refundable
+     Open/Frozen → Cancelled   admin abandons; deposits refundable
      Frozen      → Failed      funding deadline passed while short; deposits refundable
 ```
 
-**Delivery-versus-payment.** Obligations are discharged only on the `Frozen → Locked` transition, and that transition requires every currency to be fully funded. While a session is `Frozen`, any depositor may withdraw at will. There is therefore no window in which a creditor has given up a gross claim without the net being deliverable.
+**Delivery-versus-payment.** Discharge happens only on `Frozen → Locked`, which requires every
+currency fully funded. While `Frozen`, any depositor may withdraw at will — so there is no window in
+which a creditor has given up a gross claim without the net being deliverable.
 
-**Two-sided consent.** `postObligation(debtor, creditor, currency, amount, ref)` may be posted by the debtor, the creditor, or the session admin. The poster's own acknowledgement is implied; the counterparty must `acknowledge` before the row is folded into the nets. Until both parties consent, a row counts toward neither the nets nor `grossPosted`. Off-chain consent is supported via `acknowledgeWithSig` (EIP-712, EIP-1271 signers included), so a counterparty can sign and anyone can relay.
+**Two-sided consent.** `postObligation(debtor, creditor, currency, amount, ref)` may be posted by
+either party or the session admin; the poster's own consent is implied. Until the counterparty
+`acknowledge`s, the row counts toward neither the nets nor `grossPosted`. `acknowledgeWithSig` takes
+off-chain consent (EIP-712, EIP-1271 signers included) so anyone can relay a signature.
 
-**External references.** Every obligation carries a `bytes32 ref` (invoice or trade id). It must be unique within a session, and an invoice already discharged by a locked session cannot be posted again. `voidObligation` removes a row before the book is frozen and frees its reference so a corrected row can replace it.
+**External references.** Every obligation carries a `bytes32 ref` (invoice or trade id), unique within
+a session and never reusable once a locked session has discharged it. `voidObligation` removes a row
+before freeze and frees its reference for a corrected replacement.
 
-**Deposit / claim.** After freeze, each party has a signed **net** per currency. Negative net → that party deposits `|net| + fee` (partial deposits allowed). Positive net → they `claim` their net **at face value** once the session locks. Funding is per-currency in the sense that shortfalls are reported per currency, but claims open only when *all* currencies are funded — that is what makes the settlement atomic across legs.
+**Deposit / claim.** Each party holds a signed **net** per currency. Negative → deposit `|net| + fee`
+(partial deposits allowed). Positive → `claim` the net **at face value** once the session locks.
+Shortfalls report per currency, but claims open only when *all* currencies are funded, which is what
+makes settlement atomic across legs.
 
-**Settlement failure.** `freezeSession` stamps a funding deadline (`fundingWindowBlocks`, default 200). If the deadline passes while any currency is short, **anyone** may call `declareFailure(sessionId)`; every depositor then pulls their tokens back with `withdrawDeposit`. Recovery does not depend on the admin being available and works while the hub is paused. Session admin may declare failure early.
+**Settlement failure.** `freezeSession` stamps a deadline (`fundingWindowBlocks`, default 200). If it
+passes while any currency is short, **anyone** may `declareFailure(sessionId)` and every depositor
+recovers via `withdrawDeposit` — no dependence on the admin, and it works while paused. Session admin
+may declare failure early.
 
-**Fee.** Session `feeBps` (cap 1000) is snapshotted when the session **opens**, before any party consents, so it cannot be re-priced under participants. The **debtor** funds `|net| + fee`, so creditors receive their net at face value and an invoice settles for its full amount. Fees are booked to per-currency `accruedFees` only when a session locks — a session that fails accrues nothing and depositors are made whole. Equal cycles with no debtors are free.
+**Fee.** Session `feeBps` (cap 1000) is snapshotted at **open**, before anyone consents, so it cannot
+be re-priced under participants. The **debtor** funds `|net| + fee`, so an invoice settles for its face
+amount. Fees book to `accruedFees` only when a session locks — a failed session accrues nothing and
+depositors are made whole. Equal cycles with no debtors are free.
 
-**Exposure limits.** `setMaxNet(party, currency, max)` caps a party's absolute net (0 = unlimited). The cap is checked when a row is folded into the nets, so an obligation that would breach a limit is rejected at acknowledgement rather than at freeze.
+**Exposure limits.** `setMaxNet(party, currency, max)` caps a party's absolute net (0 = unlimited),
+checked at inclusion — so a breaching obligation is rejected at acknowledgement, not at freeze.
 
-**Allowlist and settlement.** `deposit` does **not** re-check the allowlist — a party must always be able to meet what it owes, or the session would deadlock. `claim` **does** require current allowlist standing: a de-listed party keeps its entitlement and can claim once re-listed, or the admin may `sweepQuarantined` it to the `quarantineAddress`.
+**Allowlist during settlement.** `claim` requires current standing; `deposit` deliberately does not,
+since a party must always be able to meet what it owes. A de-listed creditor keeps its entitlement for
+re-listing, or the admin may `sweepQuarantined` it to the `quarantineAddress`.
 
-**Eliminated volume** (informational, not billed): per currency `eliminated = grossPosted − residual`, where residual is `Σ` positive nets. Read it next to `participantCount` and `counterpartyPairs`: consenting parties can post offsetting rows, so this is an **operator-attested** service metric, not a trustless one.
+**Eliminated volume** (informational, not billed): `eliminated = grossPosted − residual` per currency,
+residual being `Σ` positive nets. Read it next to `participantCount` and `counterpartyPairs` —
+consenting parties can post offsetting rows, so it is **operator-attested**, not trustless.
 
-**Session history:** all per-session state is keyed by `sessionId` and never cleared. Opening a new session does not touch earlier ones, so past nets stay queryable and past claims and refunds stay available indefinitely. Because nothing is cleared and nets are maintained incrementally, `openSession` and `freezeSession` are O(1) — around 51k gas regardless of book size.
+**Session history.** State is keyed by `sessionId` and never cleared, so past nets, claims and refunds
+stay available indefinitely. With nothing to clear and nets maintained incrementally, `openSession` and
+`freezeSession` are O(1) — about 51k gas regardless of book size.
 
-**Follow-up (not in this version):** auto mint/redeem inside a session to cover residuals; pro-rata partial settlement at the deadline as an alternative to refunding; coupling the settlement calendar to MRW.
+**Not in this version:** auto mint/redeem inside a session to cover residuals; pro-rata partial
+settlement at the deadline as an alternative to refunding; coupling the settlement calendar to the MRW.
 
-#### Example graph (Anvil #2 / #3 / #4)
+## Inventory: buckets, rates and fees
 
-Ensure **#2** holds at least **90.45 CLP** of inventory (mint via User tab or transfer) — the debtor funds its net plus the receipt fee. Then on **Settle**:
+CLP and ARS exist so that a residual can actually be delivered. Each is minted against USD at the
+oracle rate, from its own vault, during a shared window.
 
-1. **Admin (#0)** — Open session
-2. Post these obligations (poster = debtor, creditor, or Admin), then have each counterparty **Acknowledge**:
+### Mint / redeem window (MRW)
 
-| Debtor | Creditor | Currency | Amount | Ref |
-|--------|----------|----------|--------|-----|
-| #2 User1 | #3 User2 | CLP | 100 | inv-1 |
-| #3 User2 | #4 User3 | CLP | 40 | inv-2 |
-| #4 User3 | #2 User1 | CLP | 10 | inv-3 |
+Shared on `ProtocolHub` (`openWindow` / `closeWindow`).
 
-3. **Freeze & net** — matrix should show:
+- Default **200 blocks**, configurable via `setWindowDurationBlocks`
+- Minimum open length **50 blocks**, configurable via `setMinWindowBlocks` (must not exceed the duration)
+- One open unlocks mint/redeem for **both** currencies — each still needs its own rate
+- While closed, mint, redeem and `setRate` all revert; balances are untouched
+
+### Exchange rates
+
+- Units of currency per 1 USD, 18 decimals (`950e18` ≈ 950 CLP/USD)
+- Currency ids: `0 = CLP`, `1 = ARS`. `2 = USD` is settlement inventory only — never a bucket or a rate
+- Posted only by Trusted_Oracle, while the MRW is open and the hub is not paused
+- **One rate per currency per window.** A second post in the same MRW reverts, making the mint and
+  redeem price identical inside a window. Without it, a party could mint at one rate and redeem at
+  another for a risk-free profit out of the operator's buffer.
+- **Deviation bound.** A post further than `maxDeviationBps` from the previous rate reverts. The oracle
+  owner can push a genuine large move with `forceSetRate`, which emits a distinct `RateForced` event.
+- **Staleness.** Every USD-moving action — mint, redeem, reserve withdrawal — is rejected if the rate
+  is not stamped with the current `windowNonce`, or is older than `maxRateAge` (default 1 hour).
+- Feeder: `node scripts/oracle-feeder.mjs` pulls from
+  [open.er-api.com](https://www.exchangerate-api.com/) and skips a currency already rated this window.
 
 ```text
-#2: −90 CLP  (deposit 90.45 = 90 + 0.45 fee)
-#3: +60 CLP  (claim 60)
-#4: +30 CLP  (claim 30)
+mint:    collateralIn = usdIn − mintFee
+         tokenOut     = collateralIn * ratePerUsd / 1e18
+redeem:  grossUsd     = tokenIn * 1e18 / ratePerUsd
+         userReceives = grossUsd − redeemFee
 ```
 
-4. Switch to **#2** → Deposit 90.45 CLP. The session locks automatically on full funding → **#3** Claim 60 → **#4** Claim 30 → **Settled**
+### Fees
 
-At the default **50 bps** settlement fee, #3 receives **60 CLP** and #4 receives **30 CLP** — face value — and the 0.45 CLP fee came from the debtor. Gross obligations were 150 CLP; 90 CLP moves through escrow; **60 CLP eliminated** (shown in the UI, not billed). A perfect cycle (50+50+50 the other way) nets to zero, so it locks and settles on freeze with no deposits and no fee.
+| Fee | Base | Where it goes |
+|---|---|---|
+| `mintFeeBps` (cap 1000) | USD paid in | bucket `accruedFees`; the remainder becomes collateral and sets how much token is minted |
+| `redeemFeeBps` (cap 1000) | USD paid out | bucket `accruedFees`, excluded from collateral |
+| session `feeBps` (cap 1000) | the debtor's net | `NettingSession` `accruedFees`, per currency, booked only when a session locks |
+
+Charging both mint and redeem is deliberate: a round trip costs `mintFeeBps + redeemFeeBps`, so
+creating inventory is no longer free. It does not remove FX exposure held **across** windows — see
+[Limitations](#limitations).
+
+### Collateralization (110%, per bucket)
+
+```text
+vaultUsd         = USD.balanceOf(CurrencyBucket)
+accruedFees      = tracked fee balance (subset of vaultUsd)
+collateralUsd    = vaultUsd − accruedFees
+liabilityUsd     = dollar value of that token's supply at its oracle rate
+coverageRatioBps = collateralUsd * 10000 / liabilityUsd
+```
+
+Minting requires `collateralUsd >= 1.10 * liabilityUsd`. The 10% buffer is operator capital, deposited
+per bucket with `depositReserve` (allowed at any time, including while paused).
+
+`liabilityUsd` **reverts** when the rate is missing while token supply is outstanding, rather than
+reporting zero liabilities — otherwise a reserve withdrawal could drain a vault that still backs tokens.
+
+## Operations
 
 ### Pause
 
@@ -128,204 +266,78 @@ At the default **50 bps** settlement fee, #3 receives **60 CLP** and #4 receives
 | `openWindow` / `closeWindow`, allowlist, fee setters | Yes |
 | ERC20 transfers | Yes |
 
-### Roles
+### Reserve withdrawal
 
-| Role | Capabilities |
-|------|----------------|
-| **USD_Admin** | Mint USD |
-| **Hub_Admin** | Open/close MRW; set window duration and minimum length; pause/unpause; manage shared allowlist |
-| **Bucket_Admin** | Per-bucket deposit reserve; request/execute/cancel reserve withdrawal; set mint and redeem fees; set max rate age; withdraw bucket fees; upgrade that bucket/token |
-| **Session_Admin** | Open/freeze/cancel session; declare failure early; set session fee, funding window, net caps and quarantine address; sweep quarantined claims; withdraw settlement fees; upgrade NettingSession |
-| **Trusted_Oracle** | Post CLP and ARS rates (MRW open, hub not paused, once per window, within the deviation bound) |
-| **Oracle owner** | Rotate the trusted oracle, set the deviation bound, `forceSetRate` for a genuine large move |
-| **Users** | Allowlisted: mint/redeem in open MRW; post/acknowledge/deposit/claim settlement; anyone: transfer tokens |
+Getting operator capital back out is deliberately harder than a single call:
 
-Anvil mapping: account 0 = admins, account 1 = oracle, accounts 2–4 = allowlisted users.
+- Only while the **post-MRW withdrawal window** is active (100 blocks after the MRW ends). Opening a
+  new MRW cancels it for all buckets.
+- An MRW must stay open at least `minWindowBlocks` before `closeWindow` is accepted, so a withdrawal
+  window cannot be manufactured on demand.
+- **Two steps with a timelock:** `requestReserveWithdrawal(amount)`, then `executeReserveWithdrawal()`
+  at least `RESERVE_WITHDRAWAL_DELAY_BLOCKS` (25) later. `cancelReserveWithdrawal()` drops a pending
+  request. Every condition is re-checked at execution.
+- Must leave **115%** coverage (`WITHDRAW_RATIO_BPS`) — stricter than the 110% mint floor, so the
+  operator cannot sit exactly on the line.
+- Requires a fresh, current-window rate, and draws only on that bucket's own vault.
 
-## Exchange rate
-
-- Format: units of currency per 1 USD, 18 decimals (e.g. `950e18` ≈ 950 CLP/USD)
-- Currencies: `0 = CLP`, `1 = ARS` (`2 = USD` is settlement inventory only, never a bucket or a rate)
-- Posted only by Trusted_Oracle while hub MRW is open and hub is not paused
-- **One rate per currency per window.** A second post in the same MRW reverts. This is what makes the mint price and the redeem price the same within a window; without it, an allowlisted party could mint at one rate and redeem at another for a risk-free profit funded by the operator's buffer.
-- **Deviation bound.** A post further than `maxDeviationBps` from the previous rate reverts. The oracle owner can push a genuine large move with `forceSetRate`, which emits a distinct `RateForced` event.
-- **Staleness.** Buckets reject any USD-moving action — mint, redeem, and reserve withdrawal — if the rate is not stamped with the current `windowNonce` or is older than the bucket's `maxRateAge` (default 1 hour).
-- Feeder: `node scripts/oracle-feeder.mjs` posts CLP and ARS from [open.er-api.com](https://www.exchangerate-api.com/); it skips a currency whose rate is already set for the window.
-
-```
-mint:          collateralIn = usdIn − mintFee
-               tokenOut     = collateralIn * ratePerUsd / 1e18
-redeem gross:  grossUsd     = tokenIn * 1e18 / ratePerUsd
-               userReceives = grossUsd − redeemFee
-```
-
-### Protocol fees
-
-**Mint (per bucket):** `mintFeeBps` (cap 1000) on USD paid in. The fee is retained as `accruedFees`; the remainder becomes collateral and determines how much token is minted.
-
-**Redeem (per bucket):** `redeemFeeBps` (cap 1000) on USD paid out. Fee USD stays in that bucket's vault as `accruedFees` (excluded from collateral).
-
-Charging both directions is deliberate: a mint/redeem round trip costs `mintFeeBps + redeemFeeBps`, so inventory creation is no longer free. Fees do not remove FX exposure held **across** windows — see [Limitations](#limitations).
-
-**Settlement (session):** `feeBps` (cap 1000), snapshotted at `openSession`, funded by the **debtor** on top of its net. Creditors are paid at face value. Fees stay in `NettingSession` as per-currency `accruedFees` (not bucket collateral) and are booked only when a session locks. Session admin `withdrawFees(currency, amount)` anytime.
-
-## Collateralization (110%, per bucket)
-
-```
-vaultUsd         = USD.balanceOf(CurrencyBucket)
-accruedFees      = tracked fee balance (subset of vaultUsd)
-collateralUsd    = vaultUsd - accruedFees
-liabilityUsd     = dollar value of that token's supply at its oracle rate
-coverageRatioBps = collateralUsd * 10000 / liabilityUsd
-```
-
-Invariant per bucket: `collateralUsd >= 1.10 * liabilityUsd` for minting.
-
-`liabilityUsd` **reverts** if the rate is missing while token supply is outstanding, rather than reporting zero liabilities — otherwise a reserve withdrawal could drain a vault that still backs tokens.
-
-### Admin reserve withdraw
-
-Reserve exit is deliberately harder than a single call:
-
-- Only while the **post-MRW withdrawal window** is active (100 blocks after the MRW ends)
-- An MRW must stay open at least `minWindowBlocks` (default 50) before `closeWindow` is accepted, so a withdrawal window cannot be manufactured on demand
-- **Two steps with a timelock:** `requestReserveWithdrawal(amount)`, then `executeReserveWithdrawal()` at least `RESERVE_WITHDRAWAL_DELAY_BLOCKS` (25) later. `cancelReserveWithdrawal()` drops a pending request. Every condition is re-checked at execution.
-- Must leave **115%** coverage (`WITHDRAW_RATIO_BPS`), stricter than the 110% mint floor, so the operator cannot sit exactly on the line
-- Requires a fresh, current-window rate
-- Opening a new MRW cancels the withdrawal window for all buckets
-- Each bucket withdraws only from its own vault
-
-## Mint / redeem window (MRW)
-
-Shared on `ProtocolHub` (`openWindow` / `closeWindow`).
-
-- Default **200 blocks**; configurable via `setWindowDurationBlocks`
-- Minimum open length **50 blocks**; configurable via `setMinWindowBlocks` (must not exceed the duration)
-- One open unlocks mint/redeem for **both** currencies (each still needs its own rate)
-- While closed: mint/redeem/`setRate` revert; token balances unchanged
-
-## Permissioning
-
-- Shared on-chain allowlist on the hub; only listed addresses may mint or redeem
-- Hub maintains an enumerable allowlist for the dApp (copy / pick recipient)
-- Settlement token and USD transfers are **unrestricted**
+Bucket and session fee income is separate: `withdrawFees` is available at any time and is excluded from
+collateral.
 
 ## Limitations
 
-Known and deliberate, so they are not mistaken for oversights:
+Known and deliberate, so they are not mistaken for oversights.
 
-- **Netting is strictly per currency.** A party who is +100 CLP and −100 USD funds the USD leg in full and claims the CLP leg separately; no FX offset is applied. `NettingSession` has **no Oracle dependency** by design, which means a frozen session's outcome cannot be changed by a rate post. Cross-currency netting in a USD numeraire would import oracle risk into the netting product and is deliberately not built.
-- **Cross-window FX exposure remains.** One rate per window plus two-way fees removes the *risk-free* intra-window round trip, but a holder who keeps inventory across a rate change still gains or loses against the buffer. That residual is inherent to redeeming at an oracle rate and is the subject of [devaluation-risk.md](./devaluation-risk.md); per-bucket caps and a coverage breaker are the intended controls.
-- **`eliminated` is operator-attested.** References, dedupe and two-sided consent stop accidental and one-sided inflation, but two consenting addresses can still post offsetting rows. Quote it alongside participant and counterparty-pair counts.
-- **Trust model is a single admin.** One key holds `DEFAULT_ADMIN_ROLE` across every contract plus the oracle owner, with no timelock on upgrades, and `DEFAULT_ADMIN_ROLE` on a `SettlementToken` can grant itself `ENGINE_ROLE` and mint unbacked inventory. Splitting these roles and timelocking upgrades is open work (review R1-M9).
-- **The dApp still grants blanket allowances** for bucket mint/redeem. Settlement deposits approve only the exact amount needed; the mint/redeem paths do not yet (review R1-M10).
-- **Shortfall is still a redemption race**, not a pause/queue/pro-rata waterfall (see devaluation-risk.md).
-- **Storage layout changed** in this revision. These contracts are UUPS-upgradeable, but the `NettingSession` state model moved to session-keyed mappings, so an in-place upgrade over an older deployment would corrupt state. Deploy fresh.
+- **USD is assumed at par.** The `USD` token is always treated as 1 USD. The protocol does not price it
+  against fiat, haircut it, or model depeg risk. Not acceptable in production.
+- **FX risk is per bucket.** An adverse CLP or ARS move can exhaust that bucket's 10% buffer, and v1
+  handles shortfall with a redemption race (proportional burn) rather than a pause/queue/pro-rata
+  waterfall. See [devaluation-risk.md](./devaluation-risk.md).
+- **Cross-window FX exposure remains.** One rate per window plus two-way fees removes the *risk-free*
+  intra-window round trip, but a holder keeping inventory across a rate change still gains or loses
+  against the buffer — inherent to redeeming at an oracle rate. Per-bucket caps and a coverage breaker
+  are the intended controls.
+- **Netting is strictly per currency.** A party who is +100 CLP and −100 USD funds the USD leg in full
+  and claims the CLP leg separately; no FX offset is applied. `NettingSession` has **no Oracle
+  dependency** by design, so a frozen session's outcome cannot be changed by a rate post. A USD-numeraire
+  mode would import oracle risk into the netting product, so it is deliberately not built.
+- **`eliminated` is operator-attested.** References, dedupe and two-sided consent stop accidental and
+  one-sided inflation, but two consenting addresses can still post offsetting rows.
+- **Trust model is a single admin.** One key holds `DEFAULT_ADMIN_ROLE` across every contract plus the
+  oracle owner, with no timelock on upgrades — and admin on a `SettlementToken` can grant itself
+  `ENGINE_ROLE` and mint unbacked inventory. Splitting the roles and timelocking upgrades is open work
+  (R1-M9).
+- **The dApp still grants blanket allowances** for bucket mint/redeem. Settlement deposits approve only
+  the exact amount needed; the mint/redeem paths do not yet (R1-M10).
+- **Storage layout changed** in the R1 remediation. These are UUPS proxies, but `NettingSession` moved
+  to session-keyed mappings, so an in-place upgrade over an older deployment would corrupt state.
+  Deploy fresh.
 
-## Core flows
+## Reference
 
-```
-USD_Admin ──mint──► USD
-Hub_Admin ──open/close MRW / pause / allowlist──► ProtocolHub
-Trusted_Oracle ──setRate(currency, rate)──► Oracle   (once per window)
-
-Bucket_Admin ──depositReserve──► CurrencyBucket (anytime)
-User ──mint/redeem──► CurrencyBucket (allowlisted, MRW open, fresh rate)
-User ──transfer──► USD / CLP / ARS (any address)
-
-Bucket_Admin ──requestReserveWithdrawal──► …25 blocks…──► executeReserveWithdrawal
-Bucket_Admin ──withdrawFees──► (anytime, per bucket)
-```
-
-## dApp (FX Net)
-
-Vite + React + wagmi/viem against Anvil:
-
-| View | Actions |
-|------|---------|
-| **Settle** | Open/freeze/cancel session; declare failure; post obligations with a reference; acknowledge or void rows; view nets, deposits and shortfalls; deposit, withdraw a deposit, claim |
-| **Admin** | Shared MRW/pause/allowlist; mint USD; per-bucket reserve and timelocked withdrawal; mint and redeem fees; settlement fee and funding window |
-| **Oracle** | Post CLP and ARS rates |
-| **User** | Mint/redeem inventory; transfer USD/CLP/ARS; pick/copy allowlisted recipients |
-
-## Repo layout
-
-```
+```text
 nicofx/
   foundry.toml
   src/           USD, ProtocolHub, Oracle, SettlementToken, CurrencyBucket, NettingSession, Currency
   script/        Deploy.s.sol
-  test/          CurrencyBucket.t.sol, NettingSession.t.sol, PricingAndReserves.t.sol,
-                 Walkthrough.t.sol
+  test/          CurrencyBucket, NettingSession, PricingAndReserves, Walkthrough
   app/           Vite + React dApp (FX Net)
   scripts/       oracle-feeder.mjs, sync-abis.sh
   reviews/       R<n>-<commit>.md critical reviews + README (citation convention)
-  readme.md, walkthrough.md, devaluation-risk.md, ideation.md
 ```
 
-### Setup
+| Document | What it covers |
+|---|---|
+| [walkthrough.md](./walkthrough.md) | Guided tour of the dApp: setup, happy path, failure paths |
+| [reviews/](./reviews/) | Critical reviews and the `R1-<id>` citation convention |
+| [devaluation-risk.md](./devaluation-risk.md) | FX shortfall policy: the race, and the options not taken |
+| [ideation.md](./ideation.md) | Backlog, locked decisions, and what is still worth challenging |
 
-**Requirements:** [Foundry](https://book.getfoundry.sh/getting-started/installation) and [Node.js](https://nodejs.org/) 18+.
+**Tests** — `forge test` (100 tests). `forge test --list` is the authoritative index; broadly:
 
-```bash
-git clone --recurse-submodules <repo-url>
-cd nicofx
-# or: git submodule update --init --recursive
-```
-
-### Local development
-
-```bash
-forge test
-
-# terminal 1
-anvil
-
-# terminal 2 — deploy (writes app/src/contracts/deployments.json)
-forge script script/Deploy.s.sol --rpc-url http://127.0.0.1:8545 --broadcast
-
-# terminal 3
-cd app && npm install && npm run dev
-
-# terminal 4 (optional) — post CLP+ARS (MRW must be open, once per window)
-node scripts/oracle-feeder.mjs --once
-# or: node scripts/oracle-feeder.mjs --currency clp
-```
-
-After changing a contract interface, refresh the dApp's ABIs:
-
-```bash
-./scripts/sync-abis.sh
-```
-
-### Walkthrough
-
-[walkthrough.md](./walkthrough.md) is the guided version of the above: three terminals, reserves and
-inventory in **both** currencies, a session with CLP and ARS legs settled delivery-versus-payment, then
-eight failure paths with their expected errors. Its numbers are asserted by `test/Walkthrough.t.sol`.
-
-Short version if you just want the settlement flow:
-
-1. **Admin / Oracle** — Open MRW, post **both** rates, deposit reserve into **each** bucket (the vaults
-   are isolated), mint inventory
-2. **Settle** — run the [example graph](#example-graph-anvil-2--3--4) (open → post → acknowledge →
-   freeze → deposit → claim)
-3. (Optional) redeem flows for convertibility testing
-
-## Test focus
-
-- Shared allowlist / MRW / pause gating both buckets and oracle
-- Per-bucket mint headroom and 110% floor; coverage ratio
-- Cross-bucket isolation (ARS stress does not drain CLP vault)
-- Two-way fees: mint fee accrual, headroom grossed up for it, round trip costs both fees
-- One rate per window; deviation bound and the `forceSetRate` override
-- Rate staleness rejected on mint, redeem and reserve withdrawal; `liabilityUsd` reverts on a missing rate
-- Minimum MRW length; reserve withdrawal timelock, cancellation, expiry and the 115% floor
-- NettingSession: two-sided consent, reference dedupe and replay, void and re-post, EIP-712 acknowledgement
-- NettingSession DVP: deposit withdrawable while frozen, auto-lock on full funding, face-value claims
-- NettingSession failure: deadline, permissionless `declareFailure`, full recovery, no fees on a failed session, recovery while paused
-- NettingSession: net caps, quarantine sweep, escrow reporting, past-session claims after a new session opens
-- Invariants: per-currency nets sum to zero; escrow always covers open claims
-- O(1) scaling of `openSession` and `freezeSession`
-- Walkthrough: the exact figures quoted in walkthrough.md, so the doc cannot drift
-- UUPS upgrade smoke on USD
+| File | Covers |
+|---|---|
+| `NettingSession.t.sol` | Consent, references, DVP lifecycle, failure and recovery, net caps, quarantine, escrow reporting, invariants, O(1) scaling |
+| `CurrencyBucket.t.sol` | Allowlist/MRW/pause gating, mint headroom and the 110% floor, redeem fees, the shortfall race, cross-bucket isolation |
+| `PricingAndReserves.t.sol` | Two-way pricing, one rate per window, the deviation bound, rate staleness, the reserve-withdrawal timelock and 115% floor |
+| `Walkthrough.t.sol` | Every figure quoted in walkthrough.md, so the doc cannot drift |
