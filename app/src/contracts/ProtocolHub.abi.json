@@ -19,6 +19,19 @@
   },
   {
     "type": "function",
+    "name": "DEFAULT_MIN_WINDOW_BLOCKS",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "DEFAULT_WINDOW_DURATION_BLOCKS",
     "inputs": [],
     "outputs": [
@@ -216,6 +229,19 @@
   },
   {
     "type": "function",
+    "name": "minWindowBlocks",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "openWindow",
     "inputs": [],
     "outputs": [],
@@ -310,6 +336,19 @@
   },
   {
     "type": "function",
+    "name": "setMinWindowBlocks",
+    "inputs": [
+      {
+        "name": "minWindowBlocks_",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "setWindowDurationBlocks",
     "inputs": [
       {
@@ -380,6 +419,19 @@
   },
   {
     "type": "function",
+    "name": "windowClosableFromBlock",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "windowDurationBlocks",
     "inputs": [],
     "outputs": [
@@ -426,6 +478,19 @@
         "name": "",
         "type": "bool",
         "internalType": "bool"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "windowStartBlock",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ],
     "stateMutability": "view"
@@ -497,6 +562,19 @@
         "type": "uint64",
         "indexed": false,
         "internalType": "uint64"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "MinWindowBlocksUpdated",
+    "inputs": [
+      {
+        "name": "minWindowBlocks",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
       }
     ],
     "anonymous": false
@@ -744,6 +822,17 @@
     "type": "error",
     "name": "InvalidWindowDuration",
     "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "MinWindowNotElapsed",
+    "inputs": [
+      {
+        "name": "closableFromBlock",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
   },
   {
     "type": "error",

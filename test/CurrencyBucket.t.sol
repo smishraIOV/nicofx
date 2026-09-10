@@ -34,7 +34,7 @@ contract CurrencyBucketTest is Test {
         hub = ProtocolHub(
             address(new ERC1967Proxy(address(new ProtocolHub()), abi.encodeCall(ProtocolHub.initialize, (admin))))
         );
-        oracle = new Oracle(admin, oracleOp);
+        oracle = new Oracle(admin, oracleOp, 0); // deviation bound exercised in its own tests
 
         clp = SettlementToken(
             address(
@@ -81,8 +81,8 @@ contract CurrencyBucketTest is Test {
         clp.grantRole(clp.ENGINE_ROLE(), address(clpBucket));
         ars.grantRole(ars.ENGINE_ROLE(), address(arsBucket));
         hub.setAllowlist(user, true);
-        clpBucket.setFeeBps(100); // 1%
-        arsBucket.setFeeBps(100);
+        clpBucket.setRedeemFeeBps(100); // 1%
+        arsBucket.setRedeemFeeBps(100);
         vm.stopPrank();
     }
 
@@ -120,6 +120,37 @@ contract CurrencyBucketTest is Test {
         oracle.setRate(Currency.CLP, CLP_RATE);
     }
 
+    /// @dev `closeWindow` now enforces `minWindowBlocks` (R1-M1)
+    function _closeWindow() internal {
+        vm.roll(block.number + hub.minWindowBlocks());
+        vm.prank(admin);
+        hub.closeWindow();
+    }
+
+    /// @dev One rate per window (R1-C2), so a re-rate means a new window. Pass 0 to skip a currency.
+    function _reRate(uint256 clpRate, uint256 arsRate) internal {
+        _closeWindow();
+        vm.prank(admin);
+        hub.openWindow();
+        if (clpRate != 0) {
+            vm.prank(oracleOp);
+            oracle.setRate(Currency.CLP, clpRate);
+        }
+        if (arsRate != 0) {
+            vm.prank(oracleOp);
+            oracle.setRate(Currency.ARS, arsRate);
+        }
+    }
+
+    /// @dev Reserve withdrawal is now request + timelock + execute (R1-M1)
+    function _withdrawClpReserve(uint256 amount) internal {
+        vm.prank(admin);
+        clpBucket.requestReserveWithdrawal(amount);
+        vm.roll(block.number + clpBucket.RESERVE_WITHDRAWAL_DELAY_BLOCKS());
+        vm.prank(admin);
+        clpBucket.executeReserveWithdrawal();
+    }
+
     function _depositClpReserve(uint256 amount) internal {
         _fundAdminUsd(amount);
         vm.prank(admin);
@@ -154,8 +185,7 @@ contract CurrencyBucketTest is Test {
         oracle.setRate(Currency.CLP, CLP_RATE);
 
         _openAndSetClpRate();
-        vm.prank(admin);
-        hub.closeWindow();
+        _closeWindow();
 
         _fundUserUsd(100e18);
         vm.prank(user);
@@ -170,8 +200,7 @@ contract CurrencyBucketTest is Test {
     function test_RateMustBeSetInCurrentWindow() public {
         _depositClpReserve(10e18);
         _openAndSetClpRate();
-        vm.prank(admin);
-        hub.closeWindow();
+        _closeWindow();
         vm.prank(admin);
         hub.openWindow(); // new windowNonce; old rate invalid
 
@@ -220,14 +249,13 @@ contract CurrencyBucketTest is Test {
 
         vm.prank(admin);
         hub.unpause();
-        vm.prank(admin);
-        hub.closeWindow();
+        _closeWindow();
         vm.prank(admin);
         hub.pause();
         // withdrawal window active but paused
         vm.prank(admin);
         vm.expectRevert(CurrencyBucket.HubPaused.selector);
-        clpBucket.withdrawReserve(1e18);
+        clpBucket.requestReserveWithdrawal(1e18);
 
         // depositReserve and withdrawFees still ok
         _fundAdminUsd(1e18);
@@ -318,19 +346,17 @@ contract CurrencyBucketTest is Test {
 
         vm.prank(admin);
         vm.expectRevert(CurrencyBucket.WithdrawalWindowInactive.selector);
-        clpBucket.withdrawReserve(1e18);
+        clpBucket.requestReserveWithdrawal(1e18);
 
-        vm.prank(admin);
-        hub.closeWindow();
+        _closeWindow();
 
-        vm.prank(admin);
-        clpBucket.withdrawReserve(5e18);
+        _withdrawClpReserve(5e18);
         assertEq(clpBucket.collateralUsd(), 15e18);
 
         vm.roll(block.number + 101);
         vm.prank(admin);
         vm.expectRevert(CurrencyBucket.WithdrawalWindowInactive.selector);
-        clpBucket.withdrawReserve(1e18);
+        clpBucket.requestReserveWithdrawal(1e18);
     }
 
     function test_WithdrawReserveCannotBreachFloor() public {
@@ -340,19 +366,17 @@ contract CurrencyBucketTest is Test {
         vm.prank(user);
         clpBucket.mint(100e18);
 
-        vm.prank(admin);
-        hub.closeWindow();
+        _closeWindow();
 
         vm.prank(admin);
         vm.expectRevert(CurrencyBucket.InsufficientCollateral.selector);
-        clpBucket.withdrawReserve(1);
+        clpBucket.requestReserveWithdrawal(1);
     }
 
     function test_OpenWindowCancelsWithdrawalWindow() public {
         _depositClpReserve(20e18);
         _openAndSetClpRate();
-        vm.prank(admin);
-        hub.closeWindow();
+        _closeWindow();
         assertTrue(hub.withdrawalWindowActive());
 
         vm.prank(admin);
@@ -361,7 +385,7 @@ contract CurrencyBucketTest is Test {
 
         vm.prank(admin);
         vm.expectRevert(CurrencyBucket.WithdrawalWindowInactive.selector);
-        clpBucket.withdrawReserve(1e18);
+        clpBucket.requestReserveWithdrawal(1e18);
     }
 
     function test_WindowAutoExpiresAfter200Blocks() public {
@@ -387,8 +411,7 @@ contract CurrencyBucketTest is Test {
         oracle.setRate(Currency.CLP, CLP_RATE);
 
         assertTrue(hub.withdrawalWindowActive());
-        vm.prank(admin);
-        clpBucket.withdrawReserve(1e18);
+        _withdrawClpReserve(1e18);
     }
 
     function test_EarlyCloseBeforeDuration() public {
@@ -396,21 +419,19 @@ contract CurrencyBucketTest is Test {
         _openAndSetClpRate();
         uint256 end = hub.windowEndBlock();
 
-        vm.prank(admin);
-        hub.closeWindow();
+        _closeWindow();
         assertFalse(hub.windowOpen());
         assertTrue(hub.withdrawalWindowActive());
         assertLt(block.number, end);
 
-        vm.prank(admin);
-        clpBucket.withdrawReserve(1e18);
+        _withdrawClpReserve(1e18);
     }
 
     // --- Partial redeem race ---
 
     function test_PartialRedeemProportionalBurn() public {
         vm.prank(admin);
-        clpBucket.setFeeBps(0);
+        clpBucket.setRedeemFeeBps(0);
 
         _depositClpReserve(10e18);
         _openAndSetClpRate();
@@ -418,8 +439,7 @@ contract CurrencyBucketTest is Test {
         vm.prank(user);
         clpBucket.mint(100e18);
 
-        vm.prank(oracleOp);
-        oracle.setRate(Currency.CLP, 475e18);
+        _reRate(475e18, 0);
 
         uint256 clpBal = clp.balanceOf(user);
         uint256 grossUsd = clpBal * WAD / 475e18;
@@ -441,15 +461,14 @@ contract CurrencyBucketTest is Test {
 
     function test_RedeemRevertsWhenCollateralEmpty() public {
         vm.prank(admin);
-        clpBucket.setFeeBps(0);
+        clpBucket.setRedeemFeeBps(0);
         _depositClpReserve(10e18);
         _openAndSetClpRate();
         _fundUserUsd(100e18);
         vm.prank(user);
         clpBucket.mint(100e18);
 
-        vm.prank(oracleOp);
-        oracle.setRate(Currency.CLP, 475e18);
+        _reRate(475e18, 0);
 
         uint256 clpBal = clp.balanceOf(user);
         vm.prank(user);
@@ -482,8 +501,7 @@ contract CurrencyBucketTest is Test {
         uint256 feesAfterFirst = clpBucket.accruedFees();
         assertGt(feesAfterFirst, 0);
 
-        vm.prank(oracleOp);
-        oracle.setRate(Currency.CLP, 1e18);
+        _reRate(1e18, 0);
 
         uint256 rem = clp.balanceOf(user);
         vm.prank(user);
@@ -528,9 +546,9 @@ contract CurrencyBucketTest is Test {
 
         // Shock ARS and drain ARS vault via partial redeem
         vm.prank(admin);
-        arsBucket.setFeeBps(0);
-        vm.prank(oracleOp);
-        oracle.setRate(Currency.ARS, 500e18);
+        arsBucket.setRedeemFeeBps(0);
+        // Re-post both rates so the CLP bucket stays live in the new window
+        _reRate(CLP_RATE, 500e18);
 
         uint256 arsBal = ars.balanceOf(user);
         vm.prank(user);

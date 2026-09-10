@@ -26,7 +26,26 @@ export const CURRENCY = {
   usd: 2,
 } as const
 
-export const PHASE_LABELS = ['Idle', 'Open', 'Locked', 'Settled', 'Cancelled'] as const
+/// Mirrors INettingSession.Phase. Obligations are discharged on the Frozen -> Locked transition.
+export const PHASE_LABELS = [
+  'Idle',
+  'Open',
+  'Frozen',
+  'Locked',
+  'Settled',
+  'Cancelled',
+  'Failed',
+] as const
+
+export const PHASE = {
+  Idle: 0,
+  Open: 1,
+  Frozen: 2,
+  Locked: 3,
+  Settled: 4,
+  Cancelled: 5,
+  Failed: 6,
+} as const
 
 export type BucketAddresses = {
   token: Address

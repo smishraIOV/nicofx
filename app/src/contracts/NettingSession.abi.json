@@ -32,6 +32,19 @@
   },
   {
     "type": "function",
+    "name": "DEFAULT_FUNDING_WINDOW_BLOCKS",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "MAX_FEE_BPS",
     "inputs": [],
     "outputs": [
@@ -39,6 +52,19 @@
         "name": "",
         "type": "uint16",
         "internalType": "uint16"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "MAX_OBLIGATION_AMOUNT",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ],
     "stateMutability": "view"
@@ -74,7 +100,7 @@
     "name": "accruedFees",
     "inputs": [
       {
-        "name": "",
+        "name": "currency",
         "type": "uint8",
         "internalType": "uint8"
       }
@@ -90,6 +116,47 @@
   },
   {
     "type": "function",
+    "name": "acknowledge",
+    "inputs": [
+      {
+        "name": "indices",
+        "type": "uint256[]",
+        "internalType": "uint256[]"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "acknowledgeWithSig",
+    "inputs": [
+      {
+        "name": "index",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "party",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "deadline",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "signature",
+        "type": "bytes",
+        "internalType": "bytes"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "cancelSession",
     "inputs": [],
     "outputs": [],
@@ -99,6 +166,11 @@
     "type": "function",
     "name": "claim",
     "inputs": [
+      {
+        "name": "sid",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
       {
         "name": "currency",
         "type": "uint8",
@@ -112,6 +184,11 @@
     "type": "function",
     "name": "claimedOf",
     "inputs": [
+      {
+        "name": "sid",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
       {
         "name": "party",
         "type": "address",
@@ -134,8 +211,32 @@
   },
   {
     "type": "function",
+    "name": "counterpartyPairs",
+    "inputs": [
+      {
+        "name": "sid",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "currencyFullyFunded",
     "inputs": [
+      {
+        "name": "sid",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
       {
         "name": "currency",
         "type": "uint8",
@@ -153,8 +254,116 @@
   },
   {
     "type": "function",
+    "name": "declareFailure",
+    "inputs": [
+      {
+        "name": "sid",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "deposit",
+    "inputs": [
+      {
+        "name": "currency",
+        "type": "uint8",
+        "internalType": "uint8"
+      },
+      {
+        "name": "amount",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "depositedOf",
+    "inputs": [
+      {
+        "name": "sid",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "party",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "currency",
+        "type": "uint8",
+        "internalType": "uint8"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "eip712Domain",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "fields",
+        "type": "bytes1",
+        "internalType": "bytes1"
+      },
+      {
+        "name": "name",
+        "type": "string",
+        "internalType": "string"
+      },
+      {
+        "name": "version",
+        "type": "string",
+        "internalType": "string"
+      },
+      {
+        "name": "chainId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "verifyingContract",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "salt",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "extensions",
+        "type": "uint256[]",
+        "internalType": "uint256[]"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "eliminated",
     "inputs": [
+      {
+        "name": "sid",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
       {
         "name": "currency",
         "type": "uint8",
@@ -174,6 +383,11 @@
     "type": "function",
     "name": "escrowBalance",
     "inputs": [
+      {
+        "name": "sid",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
       {
         "name": "currency",
         "type": "uint8",
@@ -207,6 +421,11 @@
     "name": "feeOn",
     "inputs": [
       {
+        "name": "sid",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
         "name": "amount",
         "type": "uint256",
         "internalType": "uint256"
@@ -223,25 +442,38 @@
   },
   {
     "type": "function",
-    "name": "fund",
-    "inputs": [
-      {
-        "name": "currency",
-        "type": "uint8",
-        "internalType": "uint8"
-      }
-    ],
+    "name": "freezeSession",
+    "inputs": [],
     "outputs": [],
     "stateMutability": "nonpayable"
   },
   {
     "type": "function",
-    "name": "fundedOf",
+    "name": "fundingDeadline",
     "inputs": [
       {
-        "name": "party",
-        "type": "address",
-        "internalType": "address"
+        "name": "sid",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "fundingShortfall",
+    "inputs": [
+      {
+        "name": "sid",
+        "type": "uint256",
+        "internalType": "uint256"
       },
       {
         "name": "currency",
@@ -252,8 +484,21 @@
     "outputs": [
       {
         "name": "",
-        "type": "bool",
-        "internalType": "bool"
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "fundingWindowBlocks",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ],
     "stateMutability": "view"
@@ -261,7 +506,13 @@
   {
     "type": "function",
     "name": "getObligations",
-    "inputs": [],
+    "inputs": [
+      {
+        "name": "sid",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
     "outputs": [
       {
         "name": "",
@@ -287,6 +538,31 @@
             "name": "amount",
             "type": "uint256",
             "internalType": "uint256"
+          },
+          {
+            "name": "ref",
+            "type": "bytes32",
+            "internalType": "bytes32"
+          },
+          {
+            "name": "debtorAck",
+            "type": "bool",
+            "internalType": "bool"
+          },
+          {
+            "name": "creditorAck",
+            "type": "bool",
+            "internalType": "bool"
+          },
+          {
+            "name": "included",
+            "type": "bool",
+            "internalType": "bool"
+          },
+          {
+            "name": "voided",
+            "type": "bool",
+            "internalType": "bool"
           }
         ]
       }
@@ -334,6 +610,11 @@
     "type": "function",
     "name": "grossPosted",
     "inputs": [
+      {
+        "name": "sid",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
       {
         "name": "currency",
         "type": "uint8",
@@ -388,6 +669,25 @@
   },
   {
     "type": "function",
+    "name": "includedCount",
+    "inputs": [
+      {
+        "name": "sid",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "initialize",
     "inputs": [
       {
@@ -421,15 +721,56 @@
   },
   {
     "type": "function",
-    "name": "lockSession",
-    "inputs": [],
-    "outputs": [],
-    "stateMutability": "nonpayable"
+    "name": "isFullyFunded",
+    "inputs": [
+      {
+        "name": "sid",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "maxNet",
+    "inputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "",
+        "type": "uint8",
+        "internalType": "uint8"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
   },
   {
     "type": "function",
     "name": "netOf",
     "inputs": [
+      {
+        "name": "sid",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
       {
         "name": "party",
         "type": "address",
@@ -453,7 +794,13 @@
   {
     "type": "function",
     "name": "obligationCount",
-    "inputs": [],
+    "inputs": [
+      {
+        "name": "sid",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
     "outputs": [
       {
         "name": "",
@@ -467,6 +814,11 @@
     "type": "function",
     "name": "obligations",
     "inputs": [
+      {
+        "name": "sid",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
       {
         "name": "index",
         "type": "uint256",
@@ -498,6 +850,31 @@
             "name": "amount",
             "type": "uint256",
             "internalType": "uint256"
+          },
+          {
+            "name": "ref",
+            "type": "bytes32",
+            "internalType": "bytes32"
+          },
+          {
+            "name": "debtorAck",
+            "type": "bool",
+            "internalType": "bool"
+          },
+          {
+            "name": "creditorAck",
+            "type": "bool",
+            "internalType": "bool"
+          },
+          {
+            "name": "included",
+            "type": "bool",
+            "internalType": "bool"
+          },
+          {
+            "name": "voided",
+            "type": "bool",
+            "internalType": "bool"
           }
         ]
       }
@@ -513,8 +890,62 @@
   },
   {
     "type": "function",
+    "name": "outstandingDeposit",
+    "inputs": [
+      {
+        "name": "sid",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "party",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "currency",
+        "type": "uint8",
+        "internalType": "uint8"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "participantCount",
+    "inputs": [
+      {
+        "name": "sid",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "participants",
-    "inputs": [],
+    "inputs": [
+      {
+        "name": "sid",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
     "outputs": [
       {
         "name": "",
@@ -526,8 +957,46 @@
   },
   {
     "type": "function",
+    "name": "pendingAckCount",
+    "inputs": [
+      {
+        "name": "sid",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "phase",
     "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint8",
+        "internalType": "enum INettingSession.Phase"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "phaseOf",
+    "inputs": [
+      {
+        "name": "sid",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
     "outputs": [
       {
         "name": "",
@@ -560,9 +1029,20 @@
         "name": "amount",
         "type": "uint256",
         "internalType": "uint256"
+      },
+      {
+        "name": "ref",
+        "type": "bytes32",
+        "internalType": "bytes32"
       }
     ],
-    "outputs": [],
+    "outputs": [
+      {
+        "name": "index",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
     "stateMutability": "nonpayable"
   },
   {
@@ -574,6 +1054,19 @@
         "name": "",
         "type": "bytes32",
         "internalType": "bytes32"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "quarantineAddress",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "address"
       }
     ],
     "stateMutability": "view"
@@ -598,6 +1091,35 @@
   },
   {
     "type": "function",
+    "name": "requiredDeposit",
+    "inputs": [
+      {
+        "name": "sid",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "party",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "currency",
+        "type": "uint8",
+        "internalType": "uint8"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "revokeRole",
     "inputs": [
       {
@@ -613,6 +1135,25 @@
     ],
     "outputs": [],
     "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "sessionFeeBps",
+    "inputs": [
+      {
+        "name": "sid",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint16",
+        "internalType": "uint16"
+      }
+    ],
+    "stateMutability": "view"
   },
   {
     "type": "function",
@@ -642,6 +1183,55 @@
   },
   {
     "type": "function",
+    "name": "setFundingWindowBlocks",
+    "inputs": [
+      {
+        "name": "blocks_",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "setMaxNet",
+    "inputs": [
+      {
+        "name": "party",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "currency",
+        "type": "uint8",
+        "internalType": "uint8"
+      },
+      {
+        "name": "max",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "setQuarantineAddress",
+    "inputs": [
+      {
+        "name": "quarantineAddress_",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "supportsInterface",
     "inputs": [
       {
@@ -655,6 +1245,48 @@
         "name": "",
         "type": "bool",
         "internalType": "bool"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "sweepQuarantined",
+    "inputs": [
+      {
+        "name": "sid",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "party",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "currency",
+        "type": "uint8",
+        "internalType": "uint8"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "tokenBalance",
+    "inputs": [
+      {
+        "name": "currency",
+        "type": "uint8",
+        "internalType": "uint8"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ],
     "stateMutability": "view"
@@ -683,6 +1315,11 @@
     "name": "totalCreditorNets",
     "inputs": [
       {
+        "name": "sid",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
         "name": "currency",
         "type": "uint8",
         "internalType": "uint8"
@@ -701,6 +1338,35 @@
     "type": "function",
     "name": "totalDebtorNets",
     "inputs": [
+      {
+        "name": "sid",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "currency",
+        "type": "uint8",
+        "internalType": "uint8"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "totalRequired",
+    "inputs": [
+      {
+        "name": "sid",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
       {
         "name": "currency",
         "type": "uint8",
@@ -733,6 +1399,37 @@
     ],
     "outputs": [],
     "stateMutability": "payable"
+  },
+  {
+    "type": "function",
+    "name": "voidObligation",
+    "inputs": [
+      {
+        "name": "index",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "withdrawDeposit",
+    "inputs": [
+      {
+        "name": "sid",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "currency",
+        "type": "uint8",
+        "internalType": "uint8"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
   },
   {
     "type": "function",
@@ -779,14 +1476,82 @@
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "DepositWithdrawn",
+    "inputs": [
+      {
+        "name": "sessionId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
       },
       {
-        "name": "fee",
+        "name": "party",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "currency",
+        "type": "uint8",
+        "indexed": false,
+        "internalType": "uint8"
+      },
+      {
+        "name": "amount",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
       }
     ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "Deposited",
+    "inputs": [
+      {
+        "name": "sessionId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "party",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "currency",
+        "type": "uint8",
+        "indexed": false,
+        "internalType": "uint8"
+      },
+      {
+        "name": "amount",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "total",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "EIP712DomainChanged",
+    "inputs": [],
     "anonymous": false
   },
   {
@@ -829,28 +1594,10 @@
   },
   {
     "type": "event",
-    "name": "Funded",
+    "name": "FundingWindowUpdated",
     "inputs": [
       {
-        "name": "sessionId",
-        "type": "uint256",
-        "indexed": true,
-        "internalType": "uint256"
-      },
-      {
-        "name": "party",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      },
-      {
-        "name": "currency",
-        "type": "uint8",
-        "indexed": false,
-        "internalType": "uint8"
-      },
-      {
-        "name": "amount",
+        "name": "blocks",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
@@ -873,6 +1620,106 @@
   },
   {
     "type": "event",
+    "name": "MaxNetUpdated",
+    "inputs": [
+      {
+        "name": "party",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "currency",
+        "type": "uint8",
+        "indexed": false,
+        "internalType": "uint8"
+      },
+      {
+        "name": "max",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "NetComputed",
+    "inputs": [
+      {
+        "name": "sessionId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "party",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "currency",
+        "type": "uint8",
+        "indexed": true,
+        "internalType": "uint8"
+      },
+      {
+        "name": "net",
+        "type": "int256",
+        "indexed": false,
+        "internalType": "int256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "ObligationAcknowledged",
+    "inputs": [
+      {
+        "name": "sessionId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "index",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "party",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "ObligationIncluded",
+    "inputs": [
+      {
+        "name": "sessionId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "index",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
     "name": "ObligationPosted",
     "inputs": [
       {
@@ -886,6 +1733,12 @@
         "type": "uint256",
         "indexed": true,
         "internalType": "uint256"
+      },
+      {
+        "name": "poster",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
       },
       {
         "name": "debtor",
@@ -910,6 +1763,87 @@
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
+      },
+      {
+        "name": "ref",
+        "type": "bytes32",
+        "indexed": false,
+        "internalType": "bytes32"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "ObligationVoided",
+    "inputs": [
+      {
+        "name": "sessionId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "index",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "by",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "QuarantineAddressUpdated",
+    "inputs": [
+      {
+        "name": "quarantineAddress",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "QuarantineSwept",
+    "inputs": [
+      {
+        "name": "sessionId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "party",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "currency",
+        "type": "uint8",
+        "indexed": false,
+        "internalType": "uint8"
+      },
+      {
+        "name": "amount",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "to",
+        "type": "address",
+        "indexed": false,
+        "internalType": "address"
       }
     ],
     "anonymous": false
@@ -998,13 +1932,19 @@
         "type": "uint256",
         "indexed": true,
         "internalType": "uint256"
+      },
+      {
+        "name": "by",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
       }
     ],
     "anonymous": false
   },
   {
     "type": "event",
-    "name": "SessionLocked",
+    "name": "SessionFailed",
     "inputs": [
       {
         "name": "sessionId",
@@ -1013,7 +1953,38 @@
         "internalType": "uint256"
       },
       {
-        "name": "obligationCount",
+        "name": "by",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "blockNumber",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "SessionFrozen",
+    "inputs": [
+      {
+        "name": "sessionId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "fundingDeadline",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "includedCount",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
@@ -1029,12 +2000,43 @@
   },
   {
     "type": "event",
+    "name": "SessionLocked",
+    "inputs": [
+      {
+        "name": "sessionId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "blockNumber",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
     "name": "SessionOpened",
     "inputs": [
       {
         "name": "sessionId",
         "type": "uint256",
         "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "feeBps",
+        "type": "uint16",
+        "indexed": false,
+        "internalType": "uint16"
+      },
+      {
+        "name": "fundingWindowBlocks",
+        "type": "uint256",
+        "indexed": false,
         "internalType": "uint256"
       }
     ],
@@ -1083,6 +2085,18 @@
       },
       {
         "name": "eliminated",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "participantCount",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "counterpartyPairs",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
@@ -1137,17 +2151,48 @@
   },
   {
     "type": "error",
+    "name": "AlreadyAcknowledged",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "AlreadyClaimed",
     "inputs": []
   },
   {
     "type": "error",
-    "name": "AlreadyFunded",
+    "name": "AlreadyFullyFunded",
     "inputs": []
   },
   {
     "type": "error",
-    "name": "CurrencyNotFullyFunded",
+    "name": "AlreadyIncluded",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "AmountTooLarge",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "DeadlineNotReached",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "DepositExceedsRequirement",
+    "inputs": [
+      {
+        "name": "outstanding",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "DuplicateRef",
     "inputs": []
   },
   {
@@ -1164,11 +2209,6 @@
   {
     "type": "error",
     "name": "ERC1967NonPayable",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "EscrowNotEmpty",
     "inputs": []
   },
   {
@@ -1208,12 +2248,58 @@
   },
   {
     "type": "error",
+    "name": "InvalidSignature",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "InvalidWindow",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "NetLimitExceeded",
+    "inputs": [
+      {
+        "name": "party",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "currency",
+        "type": "uint8",
+        "internalType": "uint8"
+      },
+      {
+        "name": "net",
+        "type": "int256",
+        "internalType": "int256"
+      },
+      {
+        "name": "max",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "NoIncludedObligations",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "NotAllowlisted",
     "inputs": []
   },
   {
     "type": "error",
     "name": "NotInitializing",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "NotParty",
     "inputs": []
   },
   {
@@ -1228,7 +2314,22 @@
   },
   {
     "type": "error",
-    "name": "NothingToFund",
+    "name": "NothingToDeposit",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "NothingToWithdraw",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "ObligationInactive",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "RefAlreadySettled",
     "inputs": []
   },
   {
@@ -1245,6 +2346,16 @@
   {
     "type": "error",
     "name": "SelfDebt",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "SignatureExpired",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "StillAllowlisted",
     "inputs": []
   },
   {
@@ -1276,6 +2387,11 @@
   {
     "type": "error",
     "name": "ZeroAmount",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "ZeroRef",
     "inputs": []
   }
 ]

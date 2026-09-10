@@ -58,6 +58,19 @@
   },
   {
     "type": "function",
+    "name": "DEFAULT_MAX_RATE_AGE",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "MAX_FEE_BPS",
     "inputs": [],
     "outputs": [
@@ -72,6 +85,19 @@
   {
     "type": "function",
     "name": "REQUIRED_RATIO_BPS",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "RESERVE_WITHDRAWAL_DELAY_BLOCKS",
     "inputs": [],
     "outputs": [
       {
@@ -110,6 +136,19 @@
   },
   {
     "type": "function",
+    "name": "WITHDRAW_RATIO_BPS",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "accruedFees",
     "inputs": [],
     "outputs": [
@@ -123,7 +162,27 @@
   },
   {
     "type": "function",
+    "name": "cancelReserveWithdrawal",
+    "inputs": [],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "collateralUsd",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "coverageRatioBps",
     "inputs": [],
     "outputs": [
       {
@@ -162,16 +221,10 @@
   },
   {
     "type": "function",
-    "name": "feeBps",
+    "name": "executeReserveWithdrawal",
     "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "uint16",
-        "internalType": "uint16"
-      }
-    ],
-    "stateMutability": "view"
+    "outputs": [],
+    "stateMutability": "nonpayable"
   },
   {
     "type": "function",
@@ -300,6 +353,19 @@
   },
   {
     "type": "function",
+    "name": "maxRateAge",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "mint",
     "inputs": [
       {
@@ -310,6 +376,19 @@
     ],
     "outputs": [],
     "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "mintFeeBps",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint16",
+        "internalType": "uint16"
+      }
+    ],
+    "stateMutability": "view"
   },
   {
     "type": "function",
@@ -339,6 +418,24 @@
   },
   {
     "type": "function",
+    "name": "pendingWithdrawal",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "amount",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "requestBlock",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "proxiableUUID",
     "inputs": [],
     "outputs": [
@@ -346,6 +443,19 @@
         "name": "",
         "type": "bytes32",
         "internalType": "bytes32"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "rateIsFresh",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bool",
+        "internalType": "bool"
       }
     ],
     "stateMutability": "view"
@@ -365,6 +475,19 @@
   },
   {
     "type": "function",
+    "name": "redeemFeeBps",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint16",
+        "internalType": "uint16"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "renounceRole",
     "inputs": [
       {
@@ -376,6 +499,19 @@
         "name": "callerConfirmation",
         "type": "address",
         "internalType": "address"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "requestReserveWithdrawal",
+    "inputs": [
+      {
+        "name": "usdAmount",
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ],
     "outputs": [],
@@ -427,10 +563,36 @@
   },
   {
     "type": "function",
-    "name": "setFeeBps",
+    "name": "setMaxRateAge",
     "inputs": [
       {
-        "name": "feeBps_",
+        "name": "maxRateAge_",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "setMintFeeBps",
+    "inputs": [
+      {
+        "name": "mintFeeBps_",
+        "type": "uint16",
+        "internalType": "uint16"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "setRedeemFeeBps",
+    "inputs": [
+      {
+        "name": "redeemFeeBps_",
         "type": "uint16",
         "internalType": "uint16"
       }
@@ -529,29 +691,16 @@
   },
   {
     "type": "function",
-    "name": "withdrawReserve",
-    "inputs": [
+    "name": "withdrawableReserveUsd",
+    "inputs": [],
+    "outputs": [
       {
-        "name": "usdAmount",
+        "name": "",
         "type": "uint256",
         "internalType": "uint256"
       }
     ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "event",
-    "name": "FeeBpsUpdated",
-    "inputs": [
-      {
-        "name": "feeBps",
-        "type": "uint16",
-        "indexed": false,
-        "internalType": "uint16"
-      }
-    ],
-    "anonymous": false
+    "stateMutability": "view"
   },
   {
     "type": "event",
@@ -587,6 +736,32 @@
   },
   {
     "type": "event",
+    "name": "MaxRateAgeUpdated",
+    "inputs": [
+      {
+        "name": "maxRateAge",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "MintFeeBpsUpdated",
+    "inputs": [
+      {
+        "name": "mintFeeBps",
+        "type": "uint16",
+        "indexed": false,
+        "internalType": "uint16"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
     "name": "Minted",
     "inputs": [
       {
@@ -602,10 +777,35 @@
         "internalType": "uint256"
       },
       {
+        "name": "feeUsd",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "collateralUsd",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
         "name": "tokenOut",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "RedeemFeeBpsUpdated",
+    "inputs": [
+      {
+        "name": "redeemFeeBps",
+        "type": "uint16",
+        "indexed": false,
+        "internalType": "uint16"
       }
     ],
     "anonymous": false
@@ -659,6 +859,50 @@
       },
       {
         "name": "amount",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "ReserveWithdrawalCancelled",
+    "inputs": [
+      {
+        "name": "by",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "amount",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "ReserveWithdrawalRequested",
+    "inputs": [
+      {
+        "name": "by",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "amount",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "executableFromBlock",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
@@ -843,11 +1087,6 @@
   },
   {
     "type": "error",
-    "name": "InsufficientFeeBalance",
-    "inputs": []
-  },
-  {
-    "type": "error",
     "name": "InsufficientFees",
     "inputs": []
   },
@@ -868,6 +1107,16 @@
   },
   {
     "type": "error",
+    "name": "InvalidRateAge",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "NoPendingWithdrawal",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "NotAllowlisted",
     "inputs": []
   },
@@ -880,6 +1129,22 @@
     "type": "error",
     "name": "RateInvalid",
     "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "RateStale",
+    "inputs": [
+      {
+        "name": "lastUpdated",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "maxAge",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
   },
   {
     "type": "error",
@@ -912,6 +1177,22 @@
     "type": "error",
     "name": "WindowNotOpen",
     "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "WithdrawalAlreadyPending",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "WithdrawalNotExecutable",
+    "inputs": [
+      {
+        "name": "executableFromBlock",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
   },
   {
     "type": "error",

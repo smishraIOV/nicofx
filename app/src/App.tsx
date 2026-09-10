@@ -1,7 +1,7 @@
 import { useState, type FormEvent, type ReactNode } from 'react'
 import { type Address, formatEther, isAddress } from 'viem'
-import { bucketLabel, deployments, PHASE_LABELS, type SettlementCurrency } from './contracts'
-import { useProtocol, type TransferToken } from './useProtocol'
+import { bucketLabel, deployments, PHASE, PHASE_LABELS, type SettlementCurrency } from './contracts'
+import { bytes32ToRef, useProtocol, type TransferToken } from './useProtocol'
 import { ANVIL_ACCOUNTS } from './wagmi'
 import { useWallet } from './wallet'
 
@@ -146,7 +146,7 @@ function TxStrip() {
                 <span className="tx-time">{new Date(tx.at).toLocaleTimeString()}</span>
               </div>
               <div className="tx-detail">{tx.detail}</div>
-              {tx.hash && (
+              {tx.hash ? (
                 <div className="tx-hash-row">
                   <code className="tx-hash" title={tx.hash}>
                     {tx.hash.slice(0, 10)}…{tx.hash.slice(-8)}
@@ -158,7 +158,33 @@ function TxStrip() {
                   >
                     Copy hash
                   </button>
+                  {tx.status === 'fail' && (
+                    <button
+                      type="button"
+                      className="ghost-sm"
+                      onClick={() => void copyText(`${tx.label}: ${tx.detail}`)}
+                    >
+                      Copy error
+                    </button>
+                  )}
                 </div>
+              ) : (
+                tx.status === 'fail' && (
+                  <div className="tx-hash-row">
+                    {/* No hash exists: the call reverted in pre-flight simulation, so nothing was
+                        broadcast. Say so rather than leaving a blank where the hash would be. */}
+                    <code className="tx-hash" title="Rejected before broadcast — no transaction was submitted, so there is no hash to inspect">
+                      no hash — rejected before broadcast
+                    </code>
+                    <button
+                      type="button"
+                      className="ghost-sm"
+                      onClick={() => void copyText(`${tx.label}: ${tx.detail}`)}
+                    >
+                      Copy error
+                    </button>
+                  </div>
+                )
               )}
             </li>
           ))}
@@ -209,16 +235,60 @@ function AllowlistList({
   )
 }
 
+function ReserveWithdrawalStatus() {
+  const p = useProtocol()
+  const b = p.active
+  if (b.pendingWithdrawalAmount === 0n) {
+    return (
+      <p className="hint">
+        Reserve withdrawals are announced, then executable after{' '}
+        {b.withdrawalDelayBlocks.toString()} blocks, and only while the post-MRW window is active.
+        Withdrawable now: {formatEther(b.withdrawableReserveUsd)} USD (floor is 115%, above the 110%
+        mint floor).
+      </p>
+    )
+  }
+  const executableFrom = b.pendingWithdrawalBlock + b.withdrawalDelayBlocks
+  const ready = p.state.blockNumber >= executableFrom
+  return (
+    <div className="allowlist-box">
+      <h3>Pending reserve withdrawal</h3>
+      <p className="hint">
+        {formatEther(b.pendingWithdrawalAmount)} USD · executable from block{' '}
+        {executableFrom.toString()} (now {p.state.blockNumber.toString()}){ready ? ' — ready' : ''}
+      </p>
+      <div className="actions">
+        <button
+          type="button"
+          disabled={p.busy || !ready}
+          onClick={() => void p.executeReserveWithdrawal()}
+        >
+          Execute
+        </button>
+        <button type="button" disabled={p.busy} onClick={() => void p.cancelReserveWithdrawal()}>
+          Cancel
+        </button>
+      </div>
+    </div>
+  )
+}
+
 function AdminPanel() {
   const p = useProtocol()
   const { address } = useWallet()
   const [mintTo, setMintTo] = useState<string>(address)
   const [mintAmt, setMintAmt] = useState('1000')
   const [reserveAmt, setReserveAmt] = useState('100')
-  const [feeBps, setFeeBps] = useState(String(p.active.feeBps || 50))
+  const [mintFeeBps, setMintFeeBps] = useState(String(p.active.mintFeeBps || 25))
+  const [redeemFeeBps, setRedeemFeeBps] = useState(String(p.active.redeemFeeBps || 50))
   const [allowAddr, setAllowAddr] = useState<string>(ANVIL_ACCOUNTS[2].address)
+  // Which field the allowlist picker writes to. `mintTo` is seeded from the connected account and
+  // does not follow account switches, so without a visible target it silently mints to whoever
+  // was connected when this panel mounted.
+  const [adminPicking, setAdminPicking] = useState<'mintTo' | 'allowlist'>('allowlist')
   const [feeWithdraw, setFeeWithdraw] = useState('1')
-  const [settlementFeeBps, setSettlementFeeBps] = useState(String(p.state.settlement.feeBps || 50))
+  const [settlementFeeBps, setSettlementFeeBps] = useState(String(p.state.settlement.nextFeeBps || 50))
+  const [fundingWindow, setFundingWindow] = useState(String(p.state.settlement.fundingWindowBlocks || 200n))
   const [settlementFeeCcy, setSettlementFeeCcy] = useState<SettlementCurrency>('clp')
   const [settlementFeeWithdraw, setSettlementFeeWithdraw] = useState('1')
 
@@ -243,8 +313,23 @@ function AdminPanel() {
       <p className="hint">MRW and pause are shared across CLP and ARS. Reserves and fees are per bucket.</p>
 
       <div className="allowlist-box">
-        <h3>Allowlist</h3>
-        <AllowlistList onPick={(addr) => setAllowAddr(addr)} />
+        <h3>
+          Allowlist{' '}
+          <button
+            type="button"
+            className="ghost-sm"
+            onClick={() => setAdminPicking('allowlist')}
+          >
+            → allowlist target
+          </button>{' '}
+          <button type="button" className="ghost-sm" onClick={() => setAdminPicking('mintTo')}>
+            → USD mint recipient
+          </button>
+          <span className="hint"> (Use writes to: {adminPicking === 'mintTo' ? 'mint recipient' : 'allowlist target'})</span>
+        </h3>
+        <AllowlistList
+          onPick={(addr) => (adminPicking === 'mintTo' ? setMintTo(addr) : setAllowAddr(addr))}
+        />
       </div>
 
       <form
@@ -255,14 +340,18 @@ function AdminPanel() {
           void p.mintUsd(mintTo as Address, mintAmt)
         }}
       >
-        <Field label="Mint USD to">
+        <Field
+          label={`Mint USD to${
+            mintTo.toLowerCase() === address.toLowerCase() ? ' (this is YOUR own account)' : ''
+          }`}
+        >
           <input value={mintTo} onChange={(e) => setMintTo(e.target.value)} />
         </Field>
         <Field label="Amount">
           <input value={mintAmt} onChange={(e) => setMintAmt(e.target.value)} />
         </Field>
-        <button type="submit" disabled={p.busy}>
-          Mint USD
+        <button type="submit" disabled={p.busy || !isAddress(mintTo)}>
+          Mint USD → {isAddress(mintTo) ? short(mintTo) : 'invalid address'}
         </button>
       </form>
 
@@ -279,23 +368,60 @@ function AdminPanel() {
         <button type="submit" disabled={p.busy}>
           Approve + deposit
         </button>
-        <button type="button" disabled={p.busy} onClick={() => void p.withdrawReserve(reserveAmt)}>
-          Withdraw reserve
+        <button
+          type="button"
+          disabled={p.busy}
+          onClick={() => void p.requestReserveWithdrawal(reserveAmt)}
+        >
+          Request withdrawal
         </button>
       </form>
+      <ReserveWithdrawalStatus />
 
       <form
         className="form-row"
         onSubmit={(e) => {
           e.preventDefault()
-          void p.setFeeBps(Number(feeBps))
+          void p.setMintFeeBps(Number(mintFeeBps))
+        }}
+      >
+        <Field label={`${bucketLabel(p.activeBucket)} mint fee (bps)`}>
+          <input value={mintFeeBps} onChange={(e) => setMintFeeBps(e.target.value)} />
+        </Field>
+        <button type="submit" disabled={p.busy}>
+          Set mint fee
+        </button>
+      </form>
+      <form
+        className="form-row"
+        onSubmit={(e) => {
+          e.preventDefault()
+          void p.setRedeemFeeBps(Number(redeemFeeBps))
         }}
       >
         <Field label={`${bucketLabel(p.activeBucket)} redeem fee (bps)`}>
-          <input value={feeBps} onChange={(e) => setFeeBps(e.target.value)} />
+          <input value={redeemFeeBps} onChange={(e) => setRedeemFeeBps(e.target.value)} />
         </Field>
         <button type="submit" disabled={p.busy}>
-          Set fee
+          Set redeem fee
+        </button>
+      </form>
+      <p className="hint">
+        Charging both directions is what stops a mint/redeem round trip from being free against the
+        operator&apos;s buffer. A round trip costs mint + redeem fee.
+      </p>
+      <form
+        className="form-row"
+        onSubmit={(e) => {
+          e.preventDefault()
+          void p.setSettlementFundingWindow(fundingWindow)
+        }}
+      >
+        <Field label="Settlement funding window (blocks)">
+          <input value={fundingWindow} onChange={(e) => setFundingWindow(e.target.value)} />
+        </Field>
+        <button type="submit" disabled={p.busy}>
+          Set funding window
         </button>
       </form>
 
@@ -621,6 +747,7 @@ function SettlePanel() {
   const [creditor, setCreditor] = useState<string>(ANVIL_ACCOUNTS[3]?.address ?? '')
   const [currency, setCurrency] = useState<SettlementCurrency>('clp')
   const [amount, setAmount] = useState('10')
+  const [ref, setRef] = useState('inv-001')
   const [picking, setPicking] = useState<'debtor' | 'creditor' | null>(null)
 
   const myNets = s.partyNets.find((row) => row.party.toLowerCase() === address.toLowerCase())
@@ -638,14 +765,17 @@ function SettlePanel() {
   return (
     <Panel title="Settle">
       <p className="hint">
-        Multilateral obligation book. Post debts → admin locks (nets) → debtors fund escrow →
-        creditors claim (receipt fee haircuts the claim). Mint/redeem is inventory only (not part of
-        this session).
+        Multilateral obligation book, settled delivery-versus-payment. Post an obligation → the
+        counterparty acknowledges it → admin freezes the book → debtors deposit → the session locks
+        automatically once every currency is fully funded, and only then are obligations discharged
+        and claims opened.
       </p>
       <p className="hint">
-        Only the current session is kept in contract storage; opening a new one clears the book.
-        Prior sessions can still be rebuilt from onchain events. Equal cycles (nothing to claim) pay
-        no receipt fee; eliminated volume is shown after lock as a service metric, not a bill.
+        While <strong>Frozen</strong> nothing is discharged, so a deposit can be withdrawn at any
+        time. If the funding deadline passes while a currency is short, anyone may declare failure
+        and every depositor pulls their tokens back. Debtors fund <em>net + fee</em> so creditors are
+        paid their net at face value. Sessions are kept forever, so past claims and refunds stay
+        available after a new session opens.
       </p>
 
       <div className="balances">
@@ -666,9 +796,28 @@ function SettlePanel() {
           <strong>{s.participants.length}</strong>
         </div>
         <div>
-          <span>Receipt fee</span>
-          <strong>{s.feeBps} bps</strong>
+          <span>Consented / pending</span>
+          <strong>
+            {s.includedCount.toString()} / {s.pendingAckCount.toString()}
+          </strong>
         </div>
+        <div>
+          <span>Pairs</span>
+          <strong>{s.counterpartyPairs.toString()}</strong>
+        </div>
+        <div>
+          <span>Receipt fee</span>
+          <strong>{s.sessionFeeBps} bps</strong>
+        </div>
+        {s.fundingDeadline > 0n && (
+          <div>
+            <span>Funding deadline</span>
+            <strong>
+              block {s.fundingDeadline.toString()}
+              {p.state.blockNumber > s.fundingDeadline ? ' (passed)' : ''}
+            </strong>
+          </div>
+        )}
       </div>
 
       <div className="actions">
@@ -681,28 +830,35 @@ function SettlePanel() {
         </button>
         <button
           type="button"
-          disabled={p.busy || p.state.paused || s.phase !== 1}
-          onClick={() => void p.lockSettlementSession()}
+          disabled={p.busy || p.state.paused || s.phase !== PHASE.Open}
+          onClick={() => void p.freezeSettlementSession()}
         >
-          Lock &amp; net
+          Freeze &amp; net
         </button>
         <button
           type="button"
-          disabled={p.busy || (s.phase !== 1 && s.phase !== 2)}
+          disabled={p.busy || (s.phase !== PHASE.Open && s.phase !== PHASE.Frozen)}
           onClick={() => void p.cancelSettlementSession()}
         >
           Cancel
         </button>
+        <button
+          type="button"
+          disabled={p.busy || s.phase !== PHASE.Frozen}
+          onClick={() => void p.declareSettlementFailure(s.sessionId)}
+        >
+          Declare failure
+        </button>
       </div>
 
-      {s.phase === 1 && (
+      {s.phase === PHASE.Open && (
         <>
           <form
             className="form-row"
             onSubmit={(e) => {
               e.preventDefault()
               if (!isAddress(debtor) || !isAddress(creditor)) return
-              void p.postObligation(debtor as Address, creditor as Address, currency, amount)
+              void p.postObligation(debtor as Address, creditor as Address, currency, amount, ref)
             }}
           >
             <Field label="Debtor">
@@ -724,13 +880,23 @@ function SettlePanel() {
             <Field label="Amount">
               <input value={amount} onChange={(e) => setAmount(e.target.value)} />
             </Field>
+            <Field label="Reference (invoice id)">
+              <input value={ref} onChange={(e) => setRef(e.target.value)} />
+            </Field>
             <button
               type="submit"
-              disabled={p.busy || p.state.paused || !isAddress(debtor) || !isAddress(creditor)}
+              disabled={
+                p.busy || p.state.paused || !isAddress(debtor) || !isAddress(creditor) || !ref
+              }
             >
               Post obligation
             </button>
           </form>
+          <p className="hint">
+            The reference must be unique within the session, and an invoice already discharged by a
+            locked session cannot be posted again. Posting as a party counts as your consent; the
+            counterparty still has to acknowledge before the row nets.
+          </p>
           <div className="allowlist-box">
             <h3>
               Pick from allowlist{' '}
@@ -759,23 +925,59 @@ function SettlePanel() {
           <p className="hint">No obligations in this session.</p>
         ) : (
           <ul className="allowlist obligation-list">
-            {s.obligations.map((o, i) => (
-              <li key={`${o.debtor}-${o.creditor}-${i}`}>
-                <span>#{i}</span>
-                <code>
-                  {short(o.debtor)} → {short(o.creditor)} · {formatEther(o.amount)}{' '}
-                  {currencyName(o.currency)}
-                </code>
-              </li>
-            ))}
+            {s.obligations.map((o) => {
+              const me = address.toLowerCase()
+              const iAmDebtor = o.debtor.toLowerCase() === me
+              const iAmCreditor = o.creditor.toLowerCase() === me
+              const myAckMissing =
+                (iAmDebtor && !o.debtorAck) || (iAmCreditor && !o.creditorAck)
+              const status = o.voided
+                ? 'voided'
+                : o.included
+                  ? 'netted'
+                  : `awaiting ${!o.debtorAck ? 'debtor' : ''}${!o.debtorAck && !o.creditorAck ? ' + ' : ''}${!o.creditorAck ? 'creditor' : ''}`
+              return (
+                <li key={`${o.index}-${o.ref}`}>
+                  <span>#{o.index}</span>
+                  <code>
+                    {short(o.debtor)} → {short(o.creditor)} · {formatEther(o.amount)}{' '}
+                    {currencyName(o.currency)} · {bytes32ToRef(o.ref)} · {status}
+                  </code>
+                  {s.phase === PHASE.Open && !o.voided && (
+                    <span>
+                      {myAckMissing && (
+                        <button
+                          type="button"
+                          className="ghost-sm"
+                          disabled={p.busy || p.state.paused}
+                          onClick={() => void p.acknowledgeObligations([o.index])}
+                        >
+                          Acknowledge
+                        </button>
+                      )}{' '}
+                      {(iAmDebtor || iAmCreditor) && (
+                        <button
+                          type="button"
+                          className="ghost-sm"
+                          disabled={p.busy || p.state.paused}
+                          onClick={() => void p.voidObligation(o.index)}
+                        >
+                          Void
+                        </button>
+                      )}
+                    </span>
+                  )}
+                </li>
+              )
+            })}
           </ul>
         )}
       </div>
 
-      {(s.phase === 2 || s.phase === 3) && (
+      {s.phase >= PHASE.Frozen && s.phase !== PHASE.Cancelled && (
         <>
           <div className="allowlist-box">
-            <h3>Net matrix (after lock)</h3>
+            <h3>Net matrix (nets are final once frozen)</h3>
             <div className="net-table-wrap">
               <table className="net-table">
                 <thead>
@@ -800,7 +1002,9 @@ function SettlePanel() {
                       {(['clp', 'ars', 'usd'] as SettlementCurrency[]).map((c) => (
                         <td key={c} className={row.nets[c] < 0n ? 'debt' : row.nets[c] > 0n ? 'credit' : ''}>
                           {formatSigned(row.nets[c])}
-                          {row.funded[c] ? ' ✓f' : ''}
+                          {row.required[c] > 0n
+                            ? ` (dep ${formatEther(row.deposited[c])}/${formatEther(row.required[c])})`
+                            : ''}
                           {row.claimed[c] ? ' ✓c' : ''}
                         </td>
                       ))}
@@ -810,54 +1014,87 @@ function SettlePanel() {
               </table>
             </div>
             <p className="hint">
-              Escrow — CLP {formatEther(s.escrow.clp)} / need {formatEther(s.totalDebtor.clp)}
-              {s.fullyFunded.clp ? ' (funded)' : ''} · ARS {formatEther(s.escrow.ars)} / need{' '}
-              {formatEther(s.totalDebtor.ars)}
-              {s.fullyFunded.ars ? ' (funded)' : ''} · USD {formatEther(s.escrow.usd)} / need{' '}
-              {formatEther(s.totalDebtor.usd)}
-              {s.fullyFunded.usd ? ' (funded)' : ''}
+              Escrow (owed to creditors, excludes fee income) —{' '}
+              {(['clp', 'ars', 'usd'] as SettlementCurrency[])
+                .map(
+                  (c) =>
+                    `${bucketLabel(c)} ${formatEther(s.escrow[c])} of ${formatEther(
+                      s.totalRequired[c],
+                    )} required${s.fullyFunded[c] ? ' (funded)' : ` · short ${formatEther(s.shortfall[c])}`}`,
+                )
+                .join(' · ')}
             </p>
             <p className="hint">
               Eliminated (gross − residual, not billed) — CLP {formatEther(s.eliminated.clp)} of{' '}
               {formatEther(s.grossPosted.clp)} · ARS {formatEther(s.eliminated.ars)} of{' '}
               {formatEther(s.grossPosted.ars)} · USD {formatEther(s.eliminated.usd)} of{' '}
-              {formatEther(s.grossPosted.usd)}
+              {formatEther(s.grossPosted.usd)}. Read this next to {s.participants.length} parties
+              and {s.counterpartyPairs.toString()} distinct pairs — consenting parties can post
+              offsetting rows, so it is an operator-attested metric, not a trustless one.
             </p>
           </div>
 
-          {s.phase === 2 && myNets && (
+          {myNets && (
             <div className="actions">
               {(['clp', 'ars', 'usd'] as SettlementCurrency[]).map((c) => {
                 const net = myNets.nets[c]
-                if (net < 0n && !myNets.funded[c]) {
-                  return (
+                const out = []
+
+                // Deposit toward your requirement while the book is frozen
+                if (s.phase === PHASE.Frozen && myNets.outstanding[c] > 0n) {
+                  const owed = myNets.outstanding[c]
+                  out.push(
                     <button
-                      key={`fund-${c}`}
+                      key={`deposit-${c}`}
                       type="button"
                       disabled={p.busy || p.state.paused}
-                      onClick={() => void p.fundSettlement(c)}
+                      onClick={() => void p.depositSettlement(c, formatEther(owed))}
                     >
-                      Fund {formatEther(-net)} {bucketLabel(c)}
-                    </button>
+                      Deposit {formatEther(owed)} {bucketLabel(c)}
+                      {bpsFee(net < 0n ? -net : 0n, s.sessionFeeBps) > 0n
+                        ? ` (incl. ${formatEther(bpsFee(-net, s.sessionFeeBps))} fee)`
+                        : ''}
+                    </button>,
                   )
                 }
-                if (net > 0n && !myNets.claimed[c]) {
-                  const fee = bpsFee(net, s.feeBps)
-                  const payout = net - fee
-                  return (
+
+                // Pull a deposit back: free while Frozen, and the recovery path once failed
+                if (
+                  (s.phase === PHASE.Frozen ||
+                    s.phase === PHASE.Cancelled ||
+                    s.phase === PHASE.Failed) &&
+                  myNets.deposited[c] > 0n
+                ) {
+                  out.push(
+                    <button
+                      key={`withdraw-${c}`}
+                      type="button"
+                      disabled={p.busy}
+                      onClick={() => void p.withdrawSettlementDeposit(s.sessionId, c)}
+                    >
+                      Withdraw {formatEther(myNets.deposited[c])} {bucketLabel(c)}
+                    </button>,
+                  )
+                }
+
+                // Claim your net at face value once the session has locked
+                if (
+                  (s.phase === PHASE.Locked || s.phase === PHASE.Settled) &&
+                  net > 0n &&
+                  !myNets.claimed[c]
+                ) {
+                  out.push(
                     <button
                       key={`claim-${c}`}
                       type="button"
-                      disabled={p.busy || p.state.paused || !s.fullyFunded[c]}
-                      onClick={() => void p.claimSettlement(c)}
+                      disabled={p.busy || p.state.paused}
+                      onClick={() => void p.claimSettlement(s.sessionId, c)}
                     >
-                      Claim {formatEther(payout)} {bucketLabel(c)}
-                      {fee > 0n ? ` (−${formatEther(fee)} fee)` : ''}
-                      {!s.fullyFunded[c] ? ' (wait)' : ''}
-                    </button>
+                      Claim {formatEther(net)} {bucketLabel(c)} (face value)
+                    </button>,
                   )
                 }
-                return null
+                return out
               })}
             </div>
           )}
