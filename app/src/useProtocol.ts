@@ -123,6 +123,8 @@ export type ProtocolState = {
   usdAllowanceClp: bigint
   usdAllowanceArs: bigint
   blockNumber: bigint
+  oracleMaxDeviationBps: number
+  oracleOwner: Address
   buckets: Record<BucketId, BucketState>
   settlement: SettlementState
 }
@@ -209,6 +211,8 @@ const empty: ProtocolState = {
   usdAllowanceClp: 0n,
   usdAllowanceArs: 0n,
   blockNumber: 0n,
+  oracleMaxDeviationBps: 0,
+  oracleOwner: '0x0000000000000000000000000000000000000000',
   buckets: { clp: emptyBucket, ars: emptyBucket },
   settlement: emptySettlement,
 }
@@ -575,6 +579,8 @@ export function useProtocolController() {
         usdAllowanceClp,
         usdAllowanceArs,
         blockNumber,
+        oracleMaxDeviationBps,
+        oracleOwner,
         clpBucket,
         arsBucket,
         settlement,
@@ -638,6 +644,12 @@ export function useProtocolController() {
           args: [address, deployments.buckets.ars.engine],
         }),
         publicClient.getBlockNumber(),
+        publicClient.readContract({
+          address: deployments.oracle,
+          abi: oracleAbi,
+          functionName: 'maxDeviationBps',
+        }),
+        publicClient.readContract({ address: deployments.oracle, abi: oracleAbi, functionName: 'owner' }),
         readBucket(publicClient, 'clp', address),
         readBucket(publicClient, 'ars', address),
         readSettlement(publicClient),
@@ -659,6 +671,8 @@ export function useProtocolController() {
         usdAllowanceClp: usdAllowanceClp as bigint,
         usdAllowanceArs: usdAllowanceArs as bigint,
         blockNumber: blockNumber as bigint,
+        oracleMaxDeviationBps: Number(oracleMaxDeviationBps),
+        oracleOwner: oracleOwner as Address,
         buckets: { clp: clpBucket, ars: arsBucket },
         settlement,
       })
@@ -878,6 +892,9 @@ export function useProtocolController() {
       writeBucket(bucket, 'redeem', [parseEther(amount)]),
     setRate: (currency: BucketId, rate: string) =>
       writeOracle('setRate', [CURRENCY[currency], parseEther(rate)]),
+    forceSetRate: (currency: BucketId, rate: string) =>
+      writeOracle('forceSetRate', [CURRENCY[currency], parseEther(rate)]),
+    setMaxDeviationBps: (bps: number) => writeOracle('setMaxDeviationBps', [bps]),
     approveUsdMax: (bucket: BucketId = activeBucket) =>
       writeUsd('approve', [deployments.buckets[bucket].engine, parseEther('1000000000')]),
     approveTokenMax: (bucket: BucketId = activeBucket) =>

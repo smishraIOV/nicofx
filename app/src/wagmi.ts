@@ -20,19 +20,19 @@ export const ANVIL_ACCOUNTS = [
   },
   {
     index: 2,
-    label: 'User 1',
+    label: 'User A',
     address: '0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC' as const,
     key: '0x5de4111afa1a4b94908f83103eb1f1706367c2e68ca870fc3fb9a804cdab365a' as const,
   },
   {
     index: 3,
-    label: 'User 2',
+    label: 'User B',
     address: '0x90F79bf6EB2c4f870365E785982E1f101E93b906' as const,
     key: '0x7c852118294e51e653712a81e05800f419141751be58f605c371e15141b007a6' as const,
   },
   {
     index: 4,
-    label: 'User 3',
+    label: 'User C',
     address: '0x15d34AAf54267DB7D7c367839AAf71A00a2C6A65' as const,
     key: '0x47e179ec197488593b187f80a00eb0da91f1b9d0b13f8733639f19c30a34926a' as const,
   },

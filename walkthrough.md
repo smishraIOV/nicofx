@@ -46,18 +46,18 @@ cd app && npm install && npm run dev
 
 Open the printed URL. Switch identity with the **Anvil account** dropdown, top right.
 
-> ### One trap worth knowing first
+> ### Accounts
 >
-> The account labels are **off by one** from their numbers: `User1` is account **#2**, `User2` is
-> account **#3**, `User3` is account **#4**.
+> The users are lettered, not numbered: `User A` is account **#2**, `User B` is account **#3**,
+> `User C` is account **#4**.
 >
 > | Label | Account | Address |
 > |---|---|---|
 > | admin | #0 | `0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266` |
 > | oracle | #1 | `0x70997970C51812dc3A010C7d01b50e0d17dc79C8` |
-> | User1 | #2 | `0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC` |
-> | User2 | #3 | `0x90F79bf6EB2c4f870365E785982E1f101E93b906` |
-> | User3 | #4 | `0x15d34AAf54267DB7D7c367839AAf71A00a2C6A65` |
+> | User A | #2 | `0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC` |
+> | User B | #3 | `0x90F79bf6EB2c4f870365E785982E1f101E93b906` |
+> | User C | #4 | `0x15d34AAf54267DB7D7c367839AAf71A00a2C6A65` |
 >
 > When minting USD, check the recipient shown **on the Mint button** before pressing it.
 
@@ -70,7 +70,7 @@ Open the printed URL. Switch identity with the **Anvil account** dropdown, top r
 | Account | Tab | Action |
 |---|---|---|
 | **#0** | Admin | **Open MRW** |
-| **#1** | Oracle | Post `clpPerUsd` = `950`, then post `arsPerUsd` = `1000` |
+| **#1** | Oracle | Post `clpPerUsd` = `950`, then post `arsPerUsd` = `1500` |
 
 The Oracle tab has **two separate forms with two Post buttons** — one per currency. A currency with no
 rate for the current window cannot be minted or redeemed, so post both now.
@@ -86,7 +86,7 @@ applies to.
 | **#0** | Admin | Mint USD `1000000` to **yourself** (#0) |
 | **#0** | Admin | Bucket = **CLP** → **Approve + deposit** reserve `100` |
 | **#0** | Admin | Bucket = **ARS** → **Approve + deposit** reserve `100` |
-| **#0** | Admin | Mint USD `10` to **User1 (#2)**, then `10` to **User2 (#3)** |
+| **#0** | Admin | Mint USD `10` to **User A (#2)**, then `10` to **User B (#3)** |
 
 Use the allowlist picker's **`→ USD mint recipient`** button to fill the recipient, and confirm the
 Mint button reads `Mint USD → 0x3C44…93BC` before sending.
@@ -96,7 +96,7 @@ Mint button reads `Mint USD → 0x3C44…93BC` before sending.
 | Account | Tab | Action | Expect |
 |---|---|---|---|
 | **#2** | User | Bucket = **CLP** → **Approve + mint** `1` | **947.625 CLP** |
-| **#3** | User | Bucket = **ARS** → **Approve + mint** `1` | **997.5 ARS** |
+| **#3** | User | Bucket = **ARS** → **Approve + mint** `1` | **1496.25 ARS** |
 
 `1 × (1 − 0.0025) × 950 = 947.625`. The 25 bps mint fee is taken from the USD **before** conversion, so
 the bucket books `0.0025 USD` of fee income and only the remainder becomes collateral.
@@ -195,6 +195,23 @@ RateAlreadySetForWindow
 One rate per currency per window: the price you mint at is the price you redeem at inside that window.
 Without it, an allowlisted party could mint at one rate, have the rate moved, and redeem at another for
 a risk-free profit out of the operator's buffer. To re-rate: mine 50 blocks, Close MRW, Open MRW, post.
+
+### F2b — Move a rate past the deviation bound
+
+In a later window, **#1 → Oracle →** post `arsPerUsd` = `1700` (+13% from 1500).
+
+```
+DeviationTooLarge(1500000000000000000000, 1700000000000000000000, 500)
+```
+
+The arguments are the previous rate, the new rate and the bound in bps. A post more than 5% from the
+previous rate reverts, so a fat-fingered or compromised oracle key cannot re-rate the book. The bound
+is shared by CLP and ARS, and the first post per currency is unbounded. For a genuine large move,
+connect as **#0** (the oracle owner), who sees two extra controls on the Oracle tab:
+
+- **Force**, next to each Post button: posts the rate past the bound. It is still one post per window
+  and emits `RateForced`.
+- **Set bound**: changes `maxDeviationBps` for both currencies (max 5000, 0 disables it).
 
 ### F3 — Reuse an invoice reference
 

@@ -119,8 +119,8 @@ from mint/redeem — a session never reads the oracle.
 an obligation. Token transfers are **unrestricted**, so inventory can leave the permissioned set —
 those holders can move tokens but cannot mint, redeem or settle.
 
-Locally: Anvil account 0 holds every admin role, 1 is the oracle, 2–4 are allowlisted users. The dApp's
-labels are off by one — `User1` is account #2.
+Locally: Anvil account 0 holds every admin role, 1 is the oracle, 2–4 are allowlisted users, labelled
+`User A`–`User C` in the dApp.
 
 ## Settlement: the obligation book
 

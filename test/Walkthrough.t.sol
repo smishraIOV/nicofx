@@ -21,9 +21,9 @@ contract WalkthroughTest is Test {
 
     address admin = 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266; // anvil #0
     address op    = 0x70997970C51812dc3A010C7d01b50e0d17dc79C8; // anvil #1
-    address u1    = 0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC; // anvil #2 "User1"
-    address u2    = 0x90F79bf6EB2c4f870365E785982E1f101E93b906; // anvil #3 "User2"
-    address u3    = 0x15d34AAf54267DB7D7c367839AAf71A00a2C6A65; // anvil #4 "User3"
+    address u1    = 0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC; // anvil #2 "User A"
+    address u2    = 0x90F79bf6EB2c4f870365E785982E1f101E93b906; // anvil #3 "User B"
+    address u3    = 0x15d34AAf54267DB7D7c367839AAf71A00a2C6A65; // anvil #4 "User C"
 
     function setUp() public {
         usd = USD(address(new ERC1967Proxy(address(new USD()), abi.encodeCall(USD.initialize,(admin)))));
@@ -55,7 +55,7 @@ contract WalkthroughTest is Test {
         // --- Part 2: window + BOTH rates -------------------------------------------------
         vm.prank(admin); hub.openWindow();
         vm.prank(op); oracle.setRate(Currency.CLP, 950e18);
-        vm.prank(op); oracle.setRate(Currency.ARS, 1000e18);
+        vm.prank(op); oracle.setRate(Currency.ARS, 1500e18);
 
         // --- Part 3: reserve for BOTH buckets (isolated vaults) --------------------------
         vm.startPrank(admin);
@@ -71,10 +71,10 @@ contract WalkthroughTest is Test {
         // --- Part 4: inventory ------------------------------------------------------------
         vm.startPrank(u1); usd.approve(address(clpB), type(uint256).max); clpB.mint(1e18); vm.stopPrank();
         vm.startPrank(u2); usd.approve(address(arsB), type(uint256).max); arsB.mint(1e18); vm.stopPrank();
-        console2.log("CLP minted to User1 (1 USD in) :", clp.balanceOf(u1));
-        console2.log("ARS minted to User2 (1 USD in) :", ars.balanceOf(u2));
+        console2.log("CLP minted to User A (1 USD in) :", clp.balanceOf(u1));
+        console2.log("ARS minted to User B (1 USD in) :", ars.balanceOf(u2));
         assertEq(clp.balanceOf(u1), 947.625e18);
-        assertEq(ars.balanceOf(u2), 997.5e18);
+        assertEq(ars.balanceOf(u2), 1496.25e18);
         assertEq(clpB.accruedFees(), 0.0025e18);
         assertEq(arsB.accruedFees(), 0.0025e18);
 
@@ -127,9 +127,9 @@ contract WalkthroughTest is Test {
         vm.prank(u2); s.claim(sid, Currency.CLP);
         vm.prank(u3); s.claim(sid, Currency.CLP);
         vm.prank(u3); s.claim(sid, Currency.ARS);
-        assertEq(clp.balanceOf(u2) - clpBefore2, 60e18, "User2 receives 60 CLP at face value");
-        assertEq(clp.balanceOf(u3), 30e18, "User3 receives 30 CLP at face value");
-        assertEq(ars.balanceOf(u3), 50e18, "User3 receives 50 ARS at face value");
+        assertEq(clp.balanceOf(u2) - clpBefore2, 60e18, "User B receives 60 CLP at face value");
+        assertEq(clp.balanceOf(u3), 30e18, "User C receives 30 CLP at face value");
+        assertEq(ars.balanceOf(u3), 50e18, "User C receives 50 ARS at face value");
         assertEq(s.accruedFees(Currency.CLP), 0.45e18);
         assertEq(s.accruedFees(Currency.ARS), 0.25e18);
         assertEq(uint8(s.phase()), uint8(INettingSession.Phase.Settled));

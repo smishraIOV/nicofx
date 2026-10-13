@@ -529,8 +529,12 @@ function AdminPanel() {
 function OraclePanel() {
   const p = useProtocol()
   const [clpRate, setClpRate] = useState('950')
-  const [arsRate, setArsRate] = useState('1000')
+  const [arsRate, setArsRate] = useState('1500')
+  const [deviationBps, setDeviationBps] = useState(String(p.state.oracleMaxDeviationBps || 500))
+  const { address } = useWallet()
   const canPost = p.state.windowOpen && !p.state.paused
+  const isOwner = p.state.oracleOwner.toLowerCase() === address.toLowerCase()
+  const bound = p.state.oracleMaxDeviationBps
 
   return (
     <Panel title="Oracle">
@@ -562,6 +566,11 @@ function OraclePanel() {
         </strong>
         . Each new window requires fresh rates before mint/redeem.
       </p>
+      <p className="hint">
+        Deviation bound:{' '}
+        <strong>{bound === 0 ? 'disabled' : `${bound} bps (±${bound / 100}%)`}</strong> from the previous
+        rate, both currencies. The first post per currency is unbounded.
+      </p>
       <form
         className="form-row"
         onSubmit={(e) => {
@@ -575,6 +584,15 @@ function OraclePanel() {
         <button type="submit" disabled={p.busy || !canPost}>
           Post CLP rate
         </button>
+        {isOwner && (
+          <button
+            type="button"
+            disabled={p.busy || !canPost}
+            onClick={() => void p.forceSetRate('clp', clpRate)}
+          >
+            Force
+          </button>
+        )}
       </form>
       <form
         className="form-row"
@@ -589,9 +607,40 @@ function OraclePanel() {
         <button type="submit" disabled={p.busy || !canPost}>
           Post ARS rate
         </button>
+        {isOwner && (
+          <button
+            type="button"
+            disabled={p.busy || !canPost}
+            onClick={() => void p.forceSetRate('ars', arsRate)}
+          >
+            Force
+          </button>
+        )}
       </form>
       {!canPost && (
         <p className="hint warn-text">Posting requires MRW open and hub not paused.</p>
+      )}
+      {isOwner && (
+        <>
+          <form
+            className="form-row"
+            onSubmit={(e) => {
+              e.preventDefault()
+              void p.setMaxDeviationBps(Number(deviationBps))
+            }}
+          >
+            <Field label="maxDeviationBps">
+              <input value={deviationBps} onChange={(e) => setDeviationBps(e.target.value)} />
+            </Field>
+            <button type="submit" disabled={p.busy}>
+              Set bound
+            </button>
+          </form>
+          <p className="hint">
+            Owner only. The bound applies to CLP and ARS; max 5000 (50%), 0 disables it. Force posts a
+            rate past the bound (still one post per window) and emits RateForced.
+          </p>
+        </>
       )}
     </Panel>
   )
